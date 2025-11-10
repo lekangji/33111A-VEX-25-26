@@ -1,5 +1,7 @@
 #include "main.h"
 
+#include <algorithm>
+
 #include "lemlib/api.hpp"  // https://lemlib.readthedocs.io/en/stable/index.html
 
 // ### ENUMS ###
@@ -11,6 +13,15 @@ enum class DriveMode {
 enum class AllianceColor {
     RED,
     BLUE
+};
+
+enum class IntakeMode {
+    OFF,
+    FORWARD,
+    REVERSE,
+    LOW_GOAL,
+    MIDDLE_GOAL,
+    TOP_GOAL
 };
 
 // ### HARDWARE ###
@@ -37,7 +48,7 @@ lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
                               12.5,                        // track width (dist between center of wheels width)
                               lemlib::Omniwheel::NEW_275,  // using 2.75 omnis
                               450,                         // drivetrain rpm
-                              2                            // horizontal drift is 2 (for now)
+                              3                            // horizontal drift is 3 (for now)
 );
 
 // lateral motion controller
@@ -89,14 +100,20 @@ lemlib::Chassis chassis(drivetrain, lateralController, angularController, odomSe
 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);  // define controller
 
-// ### GLOBAL VARIABLES ###
+// ### GLOBAL CONSTANTS ###
 const int LOOP_DELAY = 20;                         // loop delay in milliseconds
-const bool COLOR_SORT_ENABLED = true;              // whether color sorting is enabled
 AllianceColor allianceColor = AllianceColor::RED;  // default alliance color (initialized)
+
+const int OPTICAL_INTEGRATION_TIME = LOOP_DELAY * 3;  // 60 ms
+const int COLORSORT_TICKER_LIMIT = 10;
+
+const bool COLOR_SORT_ENABLED = true;    // whether color sorting is enabled
+const bool DEBUG_PRINT_ENABLED = false;  // whether debug printing task is enabled
 
 // ### AUTON VARIABLES ###
 bool autonLocked = false;  // whether the auton selection is confirmed yet
 int autonSelection = 0;
+const int NUM_AUTONS = 6;  // total number of auton routines
 const char* autonNames[] = {
     "Red Nothing",
     "Red Left",
@@ -104,18 +121,17 @@ const char* autonNames[] = {
     "Blue Nothing",
     "Blue Left",
     "Blue Right"};
-const int NUM_AUTONS = 6;  // total number of auton routines
 
 // ASSET(test_txt);
 
+// ### GLOBAL VARIABLES ###
+int ticks = 0;            // loop tick counter
+int colorSortTicker = 0;  // tick count for colorsorting
+
 DriveMode driveMode = DriveMode::TANK;  // default drive mode
 
-// Toggle states for intake control
-bool intakeForward = false;
-bool intakeReverse = false;
-bool cycleForward = false;
-bool cycleReverse = false;
-bool topGoalMode = false;
+// Intake control state
+IntakeMode intakeMode = IntakeMode::OFF;
 bool tubeMechDeployed = false;
 
 // Button press tracking to detect new presses
@@ -124,44 +140,12 @@ bool r2Pressed = false;
 bool l1Pressed = false;
 bool aPressed = false;
 bool bPressed = false;
-bool xPressed = false;  // Added missing X button tracking
+bool xPressed = false;
 bool yPressed = false;
 
 // Global task pointers for proper task management
 pros::Task* debugPrintTask = nullptr;
 pros::Task* autonSelectorTask = nullptr;
-
-// Helper function to disable all intake modes
-void disableAllIntakeModes() {
-    intakeForward = false;
-    intakeReverse = false;
-    cycleForward = false;
-    cycleReverse = false;
-    topGoalMode = false;
-}
-
-// Helper function to set all roller velocities at once
-void setRollerVelocities(int back, int front, int top, int index) {
-    backRoller.move_velocity(back);
-    frontRoller.move_velocity(front);
-    topRoller.move_velocity(top);
-    indexRoller.move_velocity(index);
-}
-
-// Helper function to handle button press logic
-bool handleButtonPress(pros::controller_digital_e_t button, bool& currentPressed, bool& targetMode) {
-    bool buttonCurrent = controller.get_digital(button);
-    if (buttonCurrent && !currentPressed) {
-        targetMode = !targetMode;
-        if (targetMode) {
-            disableAllIntakeModes();
-            targetMode = true;  // Re-enable the target mode
-            return true;  // Mode was activated
-        }
-    }
-    currentPressed = buttonCurrent;
-    return false;  // Mode was not activated
-}
 
 void debugPrint(void* param) {
     // Separate task for printing robot position and status to screens
@@ -214,7 +198,7 @@ void autonSelector(void* param) {
         if (buttons & LCD_BTN_CENTER) {
             autonLocked = !autonLocked;  // toggle lock state
 
-            // todo: not hardcode it
+            // TODO: not hardcode it
             allianceColor = (autonSelection == 0 || autonSelection == 1 || autonSelection == 2) ? AllianceColor::RED : AllianceColor::BLUE;
 
             pros::lcd::clear_line(2);
@@ -250,8 +234,8 @@ void initialize() {
     indexRoller.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
 
     // configure optical sensor
-    optical.set_integration_time(60);  // 3-712 ms limits
-    optical.set_led_pwm(80);           // 0-100
+    optical.set_integration_time(OPTICAL_INTEGRATION_TIME);  // 3-712 ms limits
+    optical.set_led_pwm(100);                                // 0-100
 
     printf("Now initializing LCD...\n");
     pros::lcd::initialize();
@@ -266,8 +250,10 @@ void initialize() {
     pros::lcd::print(2, "Status: UNLOCKED");
 
     // Create debug print task that runs separately
-    debugPrintTask = new pros::Task(debugPrint, nullptr, "Debug Print");
-    debugPrintTask->set_priority(4);  // prio ranges from 1-16, default 8
+    if (DEBUG_PRINT_ENABLED) {
+        debugPrintTask = new pros::Task(debugPrint, nullptr, "Debug Print");
+        debugPrintTask->set_priority(4);  // prio ranges from 1-16, default 8
+    }
 
     // Display auton selection interface
     autonSelectorTask = new pros::Task(autonSelector, nullptr, "Auton Selector");
@@ -341,12 +327,12 @@ bool isOtherAllianceBlockDetected() {
     if (COLOR_SORT_ENABLED) {
         // Sort by color
         int proximity = optical.get_proximity();
-        if (proximity > 50) {
+        if (proximity > 40) {
             // object detected
             double hue = optical.get_hue();
-            if ((hue >= 0 && hue <= 20) || (hue >= 340 && hue <= 360)) {  // detected red
+            if (hue >= 300 && hue <= 360) {  // detected red
                 return (allianceColor == AllianceColor::BLUE);
-            } else if (hue >= 170 && hue <= 260) {  // detected blue
+            } else if (hue >= 215 && hue <= 250) {  // detected blue
                 return (allianceColor == AllianceColor::RED);
             }
         }
@@ -355,78 +341,45 @@ bool isOtherAllianceBlockDetected() {
 }
 
 void controlIntake() {
-    // Button R1 - Intake forward into bin (back, front, top rollers forward, indexer stopped, hood low)
-    // ACTION: Collecting blocks from the field into the robot's bin
+    // Button R1 - Intake forward into bin
     bool r1Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     if (r1Current && !r1Pressed) {
-        intakeForward = !intakeForward;
-        if (intakeForward) {
-            intakeReverse = false;
-            cycleForward = false;
-            cycleReverse = false;
-            topGoalMode = false;
-            // Set hood low only when intaking into bin
+        intakeMode = (intakeMode == IntakeMode::FORWARD) ? IntakeMode::OFF : IntakeMode::FORWARD;
+        if (intakeMode == IntakeMode::FORWARD) {
             hoodSolenoid.set_value(false);
         }
     }
     r1Pressed = r1Current;
 
-    // Button R2 - Outtake/reverse (all rollers backward, indexer stopped, hood unchanged)
-    // ACTION: Emergency outtake - clear jams without cycling, (reversing balls)
+    // Button R2 - Outtake/reverse
     bool r2Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     if (r2Current && !r2Pressed) {
-        intakeReverse = !intakeReverse;
-        if (intakeReverse) {
-            intakeForward = false;
-            cycleForward = false;
-            cycleReverse = false;
-            topGoalMode = false;
-        }
+        intakeMode = (intakeMode == IntakeMode::REVERSE) ? IntakeMode::OFF : IntakeMode::REVERSE;
     }
     r2Pressed = r2Current;
 
-    // Button A - Cycle into middle goal (front fwd, top reverse, back fwd, indexer stopped)
-    // ACTION: Cycling blocks into middle goal scoring position
+    // Button A - Cycle into middle goal
     bool aCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
     if (aCurrent && !aPressed) {
-        cycleForward = !cycleForward;
-        if (cycleForward) {
-            intakeForward = false;
-            intakeReverse = false;
-            cycleReverse = false;
-            topGoalMode = false;
-        }
+        intakeMode = (intakeMode == IntakeMode::MIDDLE_GOAL) ? IntakeMode::OFF : IntakeMode::MIDDLE_GOAL;
     }
     aPressed = aCurrent;
 
-    // Button B - Cycle into bottom goal (all backward including indexer, hood unchanged)
-    // ACTION: Cycling blocks into bottom goal scoring position
+    // Button B - Cycle into low goal
     bool bCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
     if (bCurrent && !bPressed) {
-        cycleReverse = !cycleReverse;
-        if (cycleReverse) {
-            intakeForward = false;
-            intakeReverse = false;
-            cycleForward = false;
-            topGoalMode = false;
-        }
+        intakeMode = (intakeMode == IntakeMode::LOW_GOAL) ? IntakeMode::OFF : IntakeMode::LOW_GOAL;
     }
     bPressed = bCurrent;
 
-    // Button X - Cycle into top goal (intake + indexer forward with hood high)
-    // ACTION: Cycling blocks into top goal scoring position
+    // Button X - Cycle into top goal
     bool xCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     if (xCurrent && !xPressed) {
-        topGoalMode = !topGoalMode;
-        if (topGoalMode) {
-            intakeForward = false;
-            intakeReverse = false;
-            cycleForward = false;
-            cycleReverse = false;
-            // Raise hood for top goal scoring
+        intakeMode = (intakeMode == IntakeMode::TOP_GOAL) ? IntakeMode::OFF : IntakeMode::TOP_GOAL;
+        if (intakeMode == IntakeMode::TOP_GOAL) {
             hoodSolenoid.set_value(true);
-
-            if (tubeMechDeployed) {  // retract tube mech if deployed - to not exceed size
+            // Ensure tube mech is retracted when going to top goal to make sure not out of size limit
+            if (tubeMechDeployed) {
                 tubeSolenoid.set_value(false);
                 tubeMechDeployed = false;
             }
@@ -434,49 +387,56 @@ void controlIntake() {
     }
     xPressed = xCurrent;
 
-    // Execute the active mode based on which button is toggled on
-    if (intakeForward) {
-        // EXECUTING: Intake mode - actively collecting blocks into bin
-        backRoller.move_velocity(200);
-        frontRoller.move_velocity(200);
-        topRoller.move_velocity(isOtherAllianceBlockDetected() ? -200 : 200);
-        indexRoller.move_velocity(0);  // Indexer off to allow blocks to settle in bin
-        // Hood is already set to low when this mode was activated
-    } else if (intakeReverse) {
-        // EXECUTING: Emergency outtake - ejecting blocks from robot
-        backRoller.move_velocity(-200);
-        frontRoller.move_velocity(-200);
-        topRoller.move_velocity(-200);
-        indexRoller.move_velocity(0);  // Indexer off for simple reverse operation
-        // Hood state unchanged
-    } else if (cycleForward) {
-        // EXECUTING: Middle goal cycling - positioning blocks for mid-height scoring
-        backRoller.move_velocity(200);   // Continue feeding blocks
-        frontRoller.move_velocity(200);  // Pull blocks forward
-        topRoller.move_velocity(-200);   // Counter-rotate to control block flow
-        indexRoller.move_velocity(200);  // Indexer off for manual control
-        // Hood state unchanged
-    } else if (cycleReverse) {
-        // EXECUTING: Bottom goal cycling - positioning blocks for low-height scoring
-        backRoller.move_velocity(200);  // Reverse all main rollers
-        frontRoller.move_velocity(-200);
-        topRoller.move_velocity(-200);
-        indexRoller.move_velocity(200);  // Indexer forward to assist with positioning
-        // Hood state unchanged
-    } else if (topGoalMode) {
-        // EXECUTING: Top goal cycling - positioning blocks for high-height scoring
-        backRoller.move_velocity(200);  // All rollers forward including indexer
-        frontRoller.move_velocity(200);
-        topRoller.move_velocity(200);
-        indexRoller.move_velocity(200);
-        // Hood is already set to high when this mode was activated
-    } else {
-        // IDLE: All systems stopped when no mode is active
-        backRoller.move_velocity(0);
-        frontRoller.move_velocity(0);
-        topRoller.move_velocity(0);
-        indexRoller.move_velocity(0);
-        // Hood state unchanged - remains at last position
+    // Execute motor commands based on active mode
+    switch (intakeMode) {
+        case IntakeMode::FORWARD: {
+            if (ticks % (OPTICAL_INTEGRATION_TIME / LOOP_DELAY) == 0) {  // update every few ticks - eq to integration time
+                if (isOtherAllianceBlockDetected()) {
+                    colorSortTicker = std::min(colorSortTicker + 5, COLORSORT_TICKER_LIMIT);
+                } else {
+                    colorSortTicker = std::max(colorSortTicker - 3, 0);
+                }
+            }
+
+            // TODO: maybe make colorsort threshold > 5, then make decrease slower to compensate
+            // THis way the sensor can double check to make sure the ball really is the right color
+            int topRollerSpeed = colorSortTicker >= 3 ? -200 : 200;
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+            topRoller.move_velocity(topRollerSpeed);
+            indexRoller.move_velocity(0);
+            break;
+        }
+        case IntakeMode::REVERSE:
+            backRoller.move_velocity(-200);
+            frontRoller.move_velocity(-200);
+            topRoller.move_velocity(-200);
+            indexRoller.move_velocity(0);
+            break;
+        case IntakeMode::MIDDLE_GOAL:
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+            topRoller.move_velocity(-200);
+            indexRoller.move_velocity(200);
+            break;
+        case IntakeMode::LOW_GOAL:  // note top roller is unneeded here
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(-200);
+            indexRoller.move_velocity(200);
+            break;
+        case IntakeMode::TOP_GOAL:
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+            topRoller.move_velocity(200);
+            indexRoller.move_velocity(200);
+            break;
+        case IntakeMode::OFF:
+        default:
+            backRoller.move_velocity(0);
+            frontRoller.move_velocity(0);
+            topRoller.move_velocity(0);
+            indexRoller.move_velocity(0);
+            break;
     }
 }
 
@@ -498,10 +458,14 @@ void opcontrol() {
         autonSelectorTask = nullptr;
     }
 
+    pros::lcd::clear_line(1);
+    pros::lcd::print(2, "Status: DRIVING");
+
     while (true) {
         controlDrivetrain();
         controlIntake();
         controlTubeMech();
+        ticks++;
         pros::delay(LOOP_DELAY);
     }
 }
