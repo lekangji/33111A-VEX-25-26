@@ -2,19 +2,29 @@
 
 #include "lemlib/api.hpp"  // https://lemlib.readthedocs.io/en/stable/index.html
 
+// Enums
+enum class DriveMode {
+    TANK,
+    ARCADE
+};
+
+// Pneumatics
+pros::ADIDigitalOut hoodSolenoid('A');  // hood solenoid
+pros::ADIDigitalOut tubeSolenoid('B');  // tube solenoid
+
 // Drivetrain motor groups
-pros::MotorGroup left_motors({-1, -2, 3}, pros::MotorGears::blue);
-pros::MotorGroup right_motors({-8, 9, 10}, pros::MotorGears::blue);
+pros::MotorGroup leftMotors({-1, -2, 3}, pros::MotorGears::blue);
+pros::MotorGroup rightMotors({-8, 9, 10}, pros::MotorGears::blue);
 
 // Intake motors
-pros::Motor front_roller(19, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
-pros::Motor top_roller(20, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
-pros::Motor back_roller(12, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
-pros::Motor cycle_roller(11, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
+pros::Motor frontRoller(19, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
+pros::Motor topRoller(20, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
+pros::Motor backRoller(12, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
+pros::Motor cycleRoller(11, pros::v5::MotorGears::green, pros::v5::MotorUnits::degrees);
 
 // drivetrain settings
-lemlib::Drivetrain drivetrain(&left_motors,                // left motor group
-                              &right_motors,               // right motor group
+lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
+                              &rightMotors,                // right motor group
                               12.7,                        // track width (dist between center of wheels width)
                               lemlib::Omniwheel::NEW_275,  // using 2.75 omnis
                               450,                         // drivetrain rpm
@@ -83,8 +93,8 @@ const int LOOP_DELAY = 20;  // loop delay in milliseconds
 
 void initalize() {
     // fix up the 5.5w
-    left_motors.set_gearing(pros::MotorGears::green, 2);   // set gearing for 5.5w motor
-    right_motors.set_gearing(pros::MotorGears::green, 0);  // set gearing for 5.5w motor
+    leftMotors.set_gearing(pros::MotorGears::green, 2);   // set gearing for 5.5w motor
+    rightMotors.set_gearing(pros::MotorGears::green, 0);  // set gearing for 5.5w motor
 
     // calibrate chassis + initialize lcd
     pros::lcd::initialize();
@@ -122,14 +132,23 @@ void autonomous() {
 }
 
 void controlDrivetrain() {
-    int left = controller.get_analog(ANALOG_LEFT_Y);
-    int right = controller.get_analog(ANALOG_RIGHT_Y);
+    if (driveMode == DriveMode::TANK) {
+        // Tank drive
+        int left = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+        int right = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y);
+        chassis.tank(left, right);
+    } else {
+        // Arcade drive
+        int throttle = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+        int steer = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+        chassis.arcade(throttle, steer);
+    }
 
-    chassis.tank(left, right);
-
-    // print robot location to the brain screen
+    // print robot location to the controller screen
     controller.print(0, 1, "X:%.1f Y:%.1f T:%.1f", chassis.getPose().x, chassis.getPose().y, chassis.getPose().theta);
 }
+
+DriveMode driveMode = DriveMode::ARCADE;  // default drive mode
 
 // Toggle states for intake control
 bool intakeForward = false;
@@ -182,31 +201,43 @@ void controlIntake() {
     // Apply intake motor states
     if (oppositeMode) {
         // Front spins one way, top spins the opposite way
-        front_roller.move(-100);
-        top_roller.move(-100);
-        back_roller.move(100);
+        frontRoller.move(-100);
+        topRoller.move(-100);
+        backRoller.move(100);
     } else if (intakeForward) {
-        front_roller.move(-100);  // Reversed
-        top_roller.move(100);
-        back_roller.move(100);
+        frontRoller.move(-100);  // Reversed
+        topRoller.move(100);
+        backRoller.move(100);
     } else if (intakeReverse) {
-        front_roller.move(100);  // Reversed
-        top_roller.move(-100);
-        back_roller.move(-100);
+        frontRoller.move(100);  // Reversed
+        topRoller.move(-100);
+        backRoller.move(-100);
     } else {
-        front_roller.move(0);
-        top_roller.move(0);
-        back_roller.move(0);
+        frontRoller.move(0);
+        topRoller.move(0);
+        backRoller.move(0);
     }
 
     // Apply cycle roller states
     if (cycleForward) {
-        cycle_roller.move(100);
+        cycleRoller.move(100);
     } else if (cycleReverse) {
-        cycle_roller.move(-100);
+        cycleRoller.move(-100);
     } else {
-        cycle_roller.move(0);
+        cycleRoller.move(0);
     }
+}
+
+bool tubeMechDeployed = false;
+bool aPressed = false;
+
+void controlPneumatics() {
+    // Example: Toggles the tube mech piston with the A button
+    bool aCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+    if (aCurrent && !aPressed) {
+        tubeMechDeployed = !tubeMechDeployed;
+    }
+    aPressed = aCurrent;
 }
 
 void opcontrol() {
