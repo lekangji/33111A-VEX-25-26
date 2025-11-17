@@ -1,5 +1,7 @@
 #include "main.h"
 
+#include <algorithm>
+
 #include "lemlib/api.hpp"  // https://lemlib.readthedocs.io/en/stable/index.html
 
 // ### ENUMS ###
@@ -11,6 +13,15 @@ enum class DriveMode {
 enum class AllianceColor {
     RED,
     BLUE
+};
+
+enum class IntakeMode {
+    OFF,
+    FORWARD,
+    REVERSE,
+    LOW_GOAL,
+    MIDDLE_GOAL,
+    TOP_GOAL
 };
 
 // ### HARDWARE ###
@@ -34,33 +45,33 @@ pros::Motor indexRoller(11, pros::v5::MotorGears::green, pros::v5::MotorUnits::d
 // drivetrain settings
 lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
                               &rightMotors,                // right motor group
-                              12.5,                        // track width (dist between center of wheels width)
+                              12.45,                       // track width (dist between center of wheels width)
                               lemlib::Omniwheel::NEW_275,  // using 2.75 omnis
                               450,                         // drivetrain rpm
-                              2                            // horizontal drift is 2 (for now)
+                              3                            // horizontal drift is 3 (for now)
 );
 
 // lateral motion controller
-lemlib::ControllerSettings lateralController(10,   // proportional gain (kP) (10)
-                                             0,    // integral gain (kI)
-                                             3,    // derivative gain (kD)
-                                             3,    // anti windup
-                                             1,    // small error range, in inches
-                                             100,  // small error range timeout, in milliseconds
-                                             3,    // large error range, in inches
-                                             500,  // large error range timeout, in milliseconds
-                                             20    // maximum acceleration (slew)
+lemlib::ControllerSettings lateralController(14.5,  // proportional gain (kP) (10) - 14
+                                             0,     // integral gain (kI)
+                                             4.5,   // derivative gain (kD) (2) - 2.75
+                                             0,     // anti windup
+                                             0,     // small error range, in inches
+                                             0,     // small error range timeout, in milliseconds
+                                             0,     // large error range, in inches
+                                             0,     // large error range timeout, in milliseconds
+                                             0      // maximum acceleration (slew)
 );
 
 // angular motion controller
-lemlib::ControllerSettings angularController(2,    // proportional gain (kP) (2)
+lemlib::ControllerSettings angularController(2.4,  // proportional gain (kP) (2) - 2.4
                                              0,    // integral gain (kI)
-                                             10,   // derivative gain (kD)
-                                             3,    // anti windup
-                                             1,    // small error range, in degrees
-                                             100,  // small error range timeout, in milliseconds
-                                             3,    // large error range, in degrees
-                                             500,  // large error range timeout, in milliseconds
+                                             20,   // derivative gain (kD) (10) - 20
+                                             0,    // anti windup
+                                             0,    // small error range, in degrees
+                                             0,    // small error range timeout, in milliseconds
+                                             0,    // large error range, in degrees
+                                             0,    // large error range timeout, in milliseconds
                                              0     // maximum acceleration (slew)
 );
 
@@ -89,33 +100,46 @@ lemlib::Chassis chassis(drivetrain, lateralController, angularController, odomSe
 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);  // define controller
 
-// ### GLOBAL VARIABLES ###
-const int LOOP_DELAY = 20;                         // loop delay in milliseconds
-const bool COLOR_SORT_ENABLED = true;              // whether color sorting is enabled
-AllianceColor allianceColor = AllianceColor::RED;  // default alliance color (initialized)
+// ### GLOBAL CONSTANTS ###
+const int LOOP_DELAY = 20;  // loop delay in milliseconds
+
+const int OPTICAL_INTEGRATION_TIME = LOOP_DELAY * 3;  // 60 ms
+const int COLORSORT_TICKER_LIMIT = 10;
+const int OPTICAL_LED_PWM = 100;
+
+const bool COLOR_SORT_ENABLED = true;    // whether color sorting is enabled
+const bool DEBUG_PRINT_ENABLED = false;  // whether debug printing task is enabled
 
 // ### AUTON VARIABLES ###
-bool autonLocked = false;  // whether the auton selection is confirmed yet
-int autonSelection = 0;
-const char* autonNames[] = {
-    "Red Nothing",
-    "Red Left",
-    "Red Right",
-    "Blue Nothing",
-    "Blue Left",
-    "Blue Right"};
-const int NUM_AUTONS = 6;  // total number of auton routines
+struct AutonRoute {
+    const char* name;
+    AllianceColor alliance;
+};
 
-// ASSET(test_txt);
+const AutonRoute autonRoutes[] = {
+    {"Red Nothing", AllianceColor::RED},    // 0
+    {"Red Left", AllianceColor::RED},       // 1
+    {"Red Right", AllianceColor::RED},      // 2
+    {"Blue Nothing", AllianceColor::BLUE},  // 3
+    {"Blue Left", AllianceColor::BLUE},     // 4
+    {"Blue Right", AllianceColor::BLUE}};   // 5
+
+const int NUM_AUTONS = 6;
+
+bool autonLocked = false;  // whether the auton selection is confirmed yet
+int autonSelection = 2;
+AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
+
+ASSET(redright_auton);
+
+// ### GLOBAL VARIABLES ###
+int ticks = 0;            // loop tick counter
+int colorSortTicker = 0;  // tick count for colorsorting
 
 DriveMode driveMode = DriveMode::TANK;  // default drive mode
 
-// Toggle states for intake control
-bool intakeForward = false;
-bool intakeReverse = false;
-bool cycleForward = false;
-bool cycleReverse = false;
-bool topGoalMode = false;
+// Intake control state
+IntakeMode intakeMode = IntakeMode::OFF;
 bool tubeMechDeployed = false;
 
 // Button press tracking to detect new presses
@@ -124,13 +148,12 @@ bool r2Pressed = false;
 bool l1Pressed = false;
 bool aPressed = false;
 bool bPressed = false;
-bool xPressed = false;  // Added missing X button tracking
+bool xPressed = false;
 bool yPressed = false;
 
 // Global task pointers for proper task management
 pros::Task* debugPrintTask = nullptr;
 pros::Task* autonSelectorTask = nullptr;
-
 
 void debugPrint(void* param) {
     // Separate task for printing robot position and status to screens
@@ -159,7 +182,7 @@ void autonSelector(void* param) {
                 // Move left
                 autonSelection = (autonSelection - 1 + NUM_AUTONS) % NUM_AUTONS;
                 pros::lcd::clear_line(0);  // only clear the line with auton name
-                pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonNames[autonSelection]);
+                pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonRoutes[autonSelection].name);
 
                 // Wait until button is released
                 while (pros::lcd::read_buttons() & LCD_BTN_LEFT) {
@@ -170,7 +193,7 @@ void autonSelector(void* param) {
                 // Move right
                 autonSelection = (autonSelection + 1) % NUM_AUTONS;
                 pros::lcd::clear_line(0);
-                pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonNames[autonSelection]);
+                pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonRoutes[autonSelection].name);
 
                 // Wait until button is released
                 while (pros::lcd::read_buttons() & LCD_BTN_RIGHT) {
@@ -183,8 +206,7 @@ void autonSelector(void* param) {
         if (buttons & LCD_BTN_CENTER) {
             autonLocked = !autonLocked;  // toggle lock state
 
-            // todo: not hardcode it
-            allianceColor = (autonSelection == 0 || autonSelection == 1 || autonSelection == 2) ? AllianceColor::RED : AllianceColor::BLUE;
+            allianceColor = autonRoutes[autonSelection].alliance;
 
             pros::lcd::clear_line(2);
             if (autonLocked) {
@@ -219,8 +241,8 @@ void initialize() {
     indexRoller.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
 
     // configure optical sensor
-    optical.set_integration_time(60);  // 3-712 ms limits
-    optical.set_led_pwm(80);           // 0-100
+    optical.set_integration_time(OPTICAL_INTEGRATION_TIME);  // 3-712 ms limits
+    optical.set_led_pwm(OPTICAL_LED_PWM);                    // 0-100
 
     printf("Now initializing LCD...\n");
     pros::lcd::initialize();
@@ -230,13 +252,15 @@ void initialize() {
     inertial.reset();
     chassis.calibrate();
 
-    pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonNames[autonSelection]);
+    pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonRoutes[autonSelection].name);
     pros::lcd::print(1, "Left/Right change, center to confirm");
     pros::lcd::print(2, "Status: UNLOCKED");
 
     // Create debug print task that runs separately
-    debugPrintTask = new pros::Task(debugPrint, nullptr, "Debug Print");
-    debugPrintTask->set_priority(4);  // prio ranges from 1-16, default 8
+    if (DEBUG_PRINT_ENABLED) {
+        debugPrintTask = new pros::Task(debugPrint, nullptr, "Debug Print");
+        debugPrintTask->set_priority(4);  // prio ranges from 1-16, default 8
+    }
 
     // Display auton selection interface
     autonSelectorTask = new pros::Task(autonSelector, nullptr, "Auton Selector");
@@ -248,6 +272,7 @@ void competition_initialize() {
 }
 
 void autonomous() {
+    allianceColor = autonRoutes[autonSelection].alliance;  // sync alliance color with current autonomous choice
     chassis.setPose(0, 0, 0);
 
     switch (autonSelection) {
@@ -256,17 +281,27 @@ void autonomous() {
             break;
         case 1:
             // Red Left
-            chassis.moveToPoint(0, 12, 4000);
-            chassis.waitUntilDone();
-            // chassis.turnToHeading(90, 4000);
-            // chassis.waitUntilDone();
-            //  chassis.follow(test_txt, 15, 4000);
             //  chassis.follow(red_left, 15, 2000);  // lookahead,timeout
             break;
-        case 2:
+        case 2: {
             // Red Right
-            // chassis.follow(red_right, 15, 2000);  // lookahead,timeout
+            topRoller.move_velocity(200);
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+
+            chassis.follow(redright_auton, 15, 10000);  // lookahead,timeout
+            chassis.waitUntil(48);                      // wait 36 inches
+            tubeSolenoid.set_value(true);
+            chassis.waitUntilDone();
+
+            lemlib::Pose pose = chassis.getPose();
+            chassis.moveToPose(pose.x - 2, pose.y, pose.theta, 1000);  // nudge forward a bit
+
+            pros::delay(2000);
+            pose = chassis.getPose();
+            chassis.moveToPose(pose.x + 27, pose.y, -pose.theta, 2000);  // back up a bit
             break;
+        }
         case 3:
             // Blue Nothing - do nothing
             break;
@@ -290,6 +325,7 @@ void controlDrivetrain() {
     if (l1CurrentState && !l1Pressed) {
         // Toggle between modes
         driveMode = (driveMode == DriveMode::TANK) ? DriveMode::ARCADE : DriveMode::TANK;
+        controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
     }
     l1Pressed = l1CurrentState;
 
@@ -310,12 +346,12 @@ bool isOtherAllianceBlockDetected() {
     if (COLOR_SORT_ENABLED) {
         // Sort by color
         int proximity = optical.get_proximity();
-        if (proximity > 50) {
+        if (proximity > 40) {
             // object detected
             double hue = optical.get_hue();
-            if ((hue >= 0 && hue <= 20) || (hue >= 340 && hue <= 360)) {  // detected red
+            if (hue >= 300 && hue <= 360) {  // detected red
                 return (allianceColor == AllianceColor::BLUE);
-            } else if (hue >= 170 && hue <= 260) {  // detected blue
+            } else if (hue >= 215 && hue <= 250) {  // detected blue
                 return (allianceColor == AllianceColor::RED);
             }
         }
@@ -324,78 +360,45 @@ bool isOtherAllianceBlockDetected() {
 }
 
 void controlIntake() {
-    // Button R1 - Intake forward into bin (back, front, top rollers forward, indexer stopped, hood low)
-    // ACTION: Collecting blocks from the field into the robot's bin
+    // Button R1 - Intake forward into bin
     bool r1Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     if (r1Current && !r1Pressed) {
-        intakeForward = !intakeForward;
-        if (intakeForward) {
-            intakeReverse = false;
-            cycleForward = false;
-            cycleReverse = false;
-            topGoalMode = false;
-            // Set hood low only when intaking into bin
+        intakeMode = (intakeMode == IntakeMode::FORWARD) ? IntakeMode::OFF : IntakeMode::FORWARD;
+        if (intakeMode == IntakeMode::FORWARD) {
             hoodSolenoid.set_value(false);
         }
     }
     r1Pressed = r1Current;
 
-    // Button R2 - Outtake/reverse (all rollers backward, indexer stopped, hood unchanged)
-    // ACTION: Emergency outtake - clear jams without cycling, (reversing balls)
+    // Button R2 - Outtake/reverse
     bool r2Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     if (r2Current && !r2Pressed) {
-        intakeReverse = !intakeReverse;
-        if (intakeReverse) {
-            intakeForward = false;
-            cycleForward = false;
-            cycleReverse = false;
-            topGoalMode = false;
-        }
+        intakeMode = (intakeMode == IntakeMode::REVERSE) ? IntakeMode::OFF : IntakeMode::REVERSE;
     }
     r2Pressed = r2Current;
 
-    // Button A - Cycle into middle goal (front fwd, top reverse, back fwd, indexer stopped)
-    // ACTION: Cycling blocks into middle goal scoring position
+    // Button A - Cycle into middle goal
     bool aCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
     if (aCurrent && !aPressed) {
-        cycleForward = !cycleForward;
-        if (cycleForward) {
-            intakeForward = false;
-            intakeReverse = false;
-            cycleReverse = false;
-            topGoalMode = false;
-        }
+        intakeMode = (intakeMode == IntakeMode::MIDDLE_GOAL) ? IntakeMode::OFF : IntakeMode::MIDDLE_GOAL;
     }
     aPressed = aCurrent;
 
-    // Button B - Cycle into bottom goal (all backward including indexer, hood unchanged)
-    // ACTION: Cycling blocks into bottom goal scoring position
+    // Button B - Cycle into low goal
     bool bCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
     if (bCurrent && !bPressed) {
-        cycleReverse = !cycleReverse;
-        if (cycleReverse) {
-            intakeForward = false;
-            intakeReverse = false;
-            cycleForward = false;
-            topGoalMode = false;
-        }
+        intakeMode = (intakeMode == IntakeMode::LOW_GOAL) ? IntakeMode::OFF : IntakeMode::LOW_GOAL;
     }
     bPressed = bCurrent;
 
-    // Button X - Cycle into top goal (intake + indexer forward with hood high)
-    // ACTION: Cycling blocks into top goal scoring position
+    // Button X - Cycle into top goal
     bool xCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     if (xCurrent && !xPressed) {
-        topGoalMode = !topGoalMode;
-        if (topGoalMode) {
-            intakeForward = false;
-            intakeReverse = false;
-            cycleForward = false;
-            cycleReverse = false;
-            // Raise hood for top goal scoring
+        intakeMode = (intakeMode == IntakeMode::TOP_GOAL) ? IntakeMode::OFF : IntakeMode::TOP_GOAL;
+        if (intakeMode == IntakeMode::TOP_GOAL) {
             hoodSolenoid.set_value(true);
-
-            if (tubeMechDeployed) {  // retract tube mech if deployed - to not exceed size
+            // Ensure tube mech is retracted when going to top goal to make sure not out of size limit
+            if (tubeMechDeployed) {
                 tubeSolenoid.set_value(false);
                 tubeMechDeployed = false;
             }
@@ -403,49 +406,60 @@ void controlIntake() {
     }
     xPressed = xCurrent;
 
-    // Execute the active mode based on which button is toggled on
-    if (intakeForward) {
-        // EXECUTING: Intake mode - actively collecting blocks into bin
-        backRoller.move_velocity(200);
-        frontRoller.move_velocity(200);
-        topRoller.move_velocity(isOtherAllianceBlockDetected() ? -200 : 200);
-        indexRoller.move_velocity(0);  // Indexer off to allow blocks to settle in bin
-        // Hood is already set to low when this mode was activated
-    } else if (intakeReverse) {
-        // EXECUTING: Emergency outtake - ejecting blocks from robot
-        backRoller.move_velocity(-200);
-        frontRoller.move_velocity(-200);
-        topRoller.move_velocity(-200);
-        indexRoller.move_velocity(0);  // Indexer off for simple reverse operation
-        // Hood state unchanged
-    } else if (cycleForward) {
-        // EXECUTING: Middle goal cycling - positioning blocks for mid-height scoring
-        backRoller.move_velocity(200);   // Continue feeding blocks
-        frontRoller.move_velocity(200);  // Pull blocks forward
-        topRoller.move_velocity(-200);   // Counter-rotate to control block flow
-        indexRoller.move_velocity(200);  // Indexer off for manual control
-        // Hood state unchanged
-    } else if (cycleReverse) {
-        // EXECUTING: Bottom goal cycling - positioning blocks for low-height scoring
-        backRoller.move_velocity(200);  // Reverse all main rollers
-        frontRoller.move_velocity(-200);
-        topRoller.move_velocity(-200);
-        indexRoller.move_velocity(200);  // Indexer forward to assist with positioning
-        // Hood state unchanged
-    } else if (topGoalMode) {
-        // EXECUTING: Top goal cycling - positioning blocks for high-height scoring
-        backRoller.move_velocity(200);  // All rollers forward including indexer
-        frontRoller.move_velocity(200);
-        topRoller.move_velocity(200);
-        indexRoller.move_velocity(200);
-        // Hood is already set to high when this mode was activated
-    } else {
-        // IDLE: All systems stopped when no mode is active
-        backRoller.move_velocity(0);
-        frontRoller.move_velocity(0);
-        topRoller.move_velocity(0);
-        indexRoller.move_velocity(0);
-        // Hood state unchanged - remains at last position
+    // Execute motor commands based on active mode
+    if (intakeMode != IntakeMode::FORWARD) {
+        colorSortTicker = 0;
+    }
+
+    switch (intakeMode) {
+        case IntakeMode::FORWARD: {
+            if (ticks % (OPTICAL_INTEGRATION_TIME / LOOP_DELAY) == 0) {  // update every few ticks - eq to integration time
+                if (isOtherAllianceBlockDetected()) {
+                    colorSortTicker = std::min(colorSortTicker + 5, COLORSORT_TICKER_LIMIT);
+                } else {
+                    colorSortTicker = std::max(colorSortTicker - 3, 0);
+                }
+            }
+
+            // TODO: maybe make colorsort threshold > 5, then make decrease slower to compensate
+            // This way the sensor can double check to make sure the ball really is the right color
+            int topRollerSpeed = colorSortTicker >= 3 ? -200 : 200;
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+            topRoller.move_velocity(topRollerSpeed);
+            indexRoller.move_velocity(0);
+            break;
+        }
+        case IntakeMode::REVERSE:
+            backRoller.move_velocity(-200);
+            frontRoller.move_velocity(-200);
+            topRoller.move_velocity(-200);
+            indexRoller.move_velocity(0);
+            break;
+        case IntakeMode::MIDDLE_GOAL:
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+            topRoller.move_velocity(-200);
+            indexRoller.move_velocity(200);
+            break;
+        case IntakeMode::LOW_GOAL:  // note top roller is unneeded here
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(-200);
+            indexRoller.move_velocity(200);
+            break;
+        case IntakeMode::TOP_GOAL:
+            backRoller.move_velocity(200);
+            frontRoller.move_velocity(200);
+            topRoller.move_velocity(200);
+            indexRoller.move_velocity(200);
+            break;
+        case IntakeMode::OFF:
+        default:
+            backRoller.move_velocity(0);
+            frontRoller.move_velocity(0);
+            topRoller.move_velocity(0);
+            indexRoller.move_velocity(0);
+            break;
     }
 }
 
@@ -460,6 +474,9 @@ void controlTubeMech() {
 }
 
 void opcontrol() {
+    controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
+    allianceColor = autonRoutes[autonSelection].alliance;  // ensure teleop color matches selected route
+
     // Stop auton selector task during driver control
     if (autonSelectorTask != nullptr) {
         autonSelectorTask->remove();
@@ -467,10 +484,14 @@ void opcontrol() {
         autonSelectorTask = nullptr;
     }
 
+    pros::lcd::clear_line(1);
+    pros::lcd::print(2, "Status: DRIVING");
+
     while (true) {
         controlDrivetrain();
         controlIntake();
         controlTubeMech();
+        ticks++;
         pros::delay(LOOP_DELAY);
     }
 }
