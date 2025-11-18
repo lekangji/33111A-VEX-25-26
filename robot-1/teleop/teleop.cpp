@@ -55,23 +55,23 @@ lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
 lemlib::ControllerSettings lateralController(14.5,  // proportional gain (kP) (10) - 14
                                              0,     // integral gain (kI)
                                              4.5,   // derivative gain (kD) (2) - 2.75
-                                             0,     // anti windup
-                                             0,     // small error range, in inches
-                                             0,     // small error range timeout, in milliseconds
-                                             0,     // large error range, in inches
-                                             0,     // large error range timeout, in milliseconds
-                                             0      // maximum acceleration (slew)
+                                             3,     // anti windup
+                                             1,     // small error range, in inches
+                                             200,   // small error range timeout, in milliseconds
+                                             2,     // large error range, in inches
+                                             500,   // large error range timeout, in milliseconds
+                                             20     // maximum acceleration (slew)
 );
 
 // angular motion controller
 lemlib::ControllerSettings angularController(2.4,  // proportional gain (kP) (2) - 2.4
                                              0,    // integral gain (kI)
                                              20,   // derivative gain (kD) (10) - 20
-                                             0,    // anti windup
-                                             0,    // small error range, in degrees
-                                             0,    // small error range timeout, in milliseconds
-                                             0,    // large error range, in degrees
-                                             0,    // large error range timeout, in milliseconds
+                                             3,    // anti windup
+                                             1,    // small error range, in inches
+                                             100,  // small error range timeout, in milliseconds
+                                             3,    // large error range, in inches
+                                             500,  // large error range timeout, in milliseconds
                                              0     // maximum acceleration (slew)
 );
 
@@ -107,8 +107,8 @@ const int OPTICAL_INTEGRATION_TIME = LOOP_DELAY * 3;  // 60 ms
 const int COLORSORT_TICKER_LIMIT = 10;
 const int OPTICAL_LED_PWM = 100;
 
-const bool COLOR_SORT_ENABLED = true;    // whether color sorting is enabled
-const bool DEBUG_PRINT_ENABLED = false;  // whether debug printing task is enabled
+const bool COLOR_SORT_ENABLED = true;   // whether color sorting is enabled
+const bool DEBUG_PRINT_ENABLED = true;  // whether debug printing task is enabled
 
 // ### AUTON VARIABLES ###
 struct AutonRoute {
@@ -126,11 +126,11 @@ const AutonRoute autonRoutes[] = {
 
 const int NUM_AUTONS = 6;
 
-bool autonLocked = false;  // whether the auton selection is confirmed yet
+bool autonLocked = true;  // whether the auton selection is confirmed yet
 int autonSelection = 2;
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
-ASSET(redright_auton);
+// ASSET(redright_txt);
 
 // ### GLOBAL VARIABLES ###
 int ticks = 0;            // loop tick counter
@@ -166,6 +166,7 @@ void debugPrint(void* param) {
         pros::lcd::print(5, "T: %.1f", pose.theta);
 
         // Print to controller screen
+        controller.clear_line(0);
         controller.print(0, 1, "X:%.1f Y:%.1f T:%.1f", pose.x, pose.y, pose.theta);
 
         pros::delay(200);
@@ -179,6 +180,7 @@ void autonSelector(void* param) {
         // Only allow changes if not locked
         if (!autonLocked) {
             if (buttons & LCD_BTN_LEFT) {
+                printf("Left button pressed\n");
                 // Move left
                 autonSelection = (autonSelection - 1 + NUM_AUTONS) % NUM_AUTONS;
                 pros::lcd::clear_line(0);  // only clear the line with auton name
@@ -190,6 +192,7 @@ void autonSelector(void* param) {
                 }
             }
             if (buttons & LCD_BTN_RIGHT) {
+                printf("Right button pressed\n");
                 // Move right
                 autonSelection = (autonSelection + 1) % NUM_AUTONS;
                 pros::lcd::clear_line(0);
@@ -204,6 +207,7 @@ void autonSelector(void* param) {
 
         // Center button locks the selection
         if (buttons & LCD_BTN_CENTER) {
+            printf("Center button pressed\n");
             autonLocked = !autonLocked;  // toggle lock state
 
             allianceColor = autonRoutes[autonSelection].alliance;
@@ -273,7 +277,6 @@ void competition_initialize() {
 
 void autonomous() {
     allianceColor = autonRoutes[autonSelection].alliance;  // sync alliance color with current autonomous choice
-    chassis.setPose(0, 0, 0);
 
     switch (autonSelection) {
         case 0:
@@ -284,22 +287,47 @@ void autonomous() {
             //  chassis.follow(red_left, 15, 2000);  // lookahead,timeout
             break;
         case 2: {
+            chassis.setPose(-48.821, -8.244, 90);
+
             // Red Right
             topRoller.move_velocity(200);
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
 
-            chassis.follow(redright_auton, 15, 10000);  // lookahead,timeout
-            chassis.waitUntil(48);                      // wait 36 inches
+            hoodSolenoid.set_value(false);
+
+            // chassis.follow(redright_txt, 10, 10000);  // lookahead,timeout
+            // chassis.waitUntil(48);                    // wait 48 inches
+            // tubeSolenoid.set_value(true);
+            // chassis.waitUntilDone();
+
+            // lemlib::MoveToPointParams params = {maxSpeed : 30};
+            lemlib::MoveToPoseParams poseParams = {maxSpeed : 30};
+
+            chassis.moveToPose(-22.6, -22, 180, 5000, poseParams);
+            chassis.waitUntilDone();
+            pros::delay(2000);
+            chassis.moveToPose(-51.062, -47.152, -90, 5000, poseParams);
+            chassis.waitUntil(30);
             tubeSolenoid.set_value(true);
             chassis.waitUntilDone();
 
             lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 2, pose.y, pose.theta, 1000);  // nudge forward a bit
-
-            pros::delay(2000);
+            chassis.moveToPose(pose.x - 2, pose.y, pose.theta, 500);  // nudge forward a bit
+            chassis.moveToPose(pose.x, pose.y, pose.theta, 500);      // straighten out
+            chassis.moveToPose(pose.x - 2, pose.y, pose.theta, 500);  // nudge forward a bit
+            pros::delay(1000);
             pose = chassis.getPose();
-            chassis.moveToPose(pose.x + 27, pose.y, -pose.theta, 2000);  // back up a bit
+            chassis.moveToPose(pose.x + 26.5, pose.y, -pose.theta, 2000);  // back up to score
+            chassis.waitUntil(10);
+
+            tubeSolenoid.set_value(false);
+            chassis.waitUntilDone();
+
+            // score
+            hoodSolenoid.set_value(true);
+            indexRoller.move_velocity(200);
+
             break;
         }
         case 3:
@@ -325,6 +353,7 @@ void controlDrivetrain() {
     if (l1CurrentState && !l1Pressed) {
         // Toggle between modes
         driveMode = (driveMode == DriveMode::TANK) ? DriveMode::ARCADE : DriveMode::TANK;
+        controller.clear_line(1);
         controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
     }
     l1Pressed = l1CurrentState;
@@ -474,7 +503,6 @@ void controlTubeMech() {
 }
 
 void opcontrol() {
-    controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
     allianceColor = autonRoutes[autonSelection].alliance;  // ensure teleop color matches selected route
 
     // Stop auton selector task during driver control
@@ -486,6 +514,7 @@ void opcontrol() {
 
     pros::lcd::clear_line(1);
     pros::lcd::print(2, "Status: DRIVING");
+    controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
 
     while (true) {
         controlDrivetrain();
