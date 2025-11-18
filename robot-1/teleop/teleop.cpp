@@ -136,7 +136,7 @@ AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default 
 int ticks = 0;            // loop tick counter
 int colorSortTicker = 0;  // tick count for colorsorting
 
-DriveMode driveMode = DriveMode::TANK;  // default drive mode
+DriveMode driveMode = DriveMode::ARCADE;  // default drive mode
 
 // Intake control state
 IntakeMode intakeMode = IntakeMode::OFF;
@@ -166,7 +166,6 @@ void debugPrint(void* param) {
         pros::lcd::print(5, "T: %.1f", pose.theta);
 
         // Print to controller screen
-        controller.clear_line(0);
         controller.print(0, 1, "X:%.1f Y:%.1f T:%.1f", pose.x, pose.y, pose.theta);
 
         pros::delay(200);
@@ -302,31 +301,33 @@ void autonomous() {
             // chassis.waitUntilDone();
 
             // lemlib::MoveToPointParams params = {maxSpeed : 30};
-            lemlib::MoveToPoseParams poseParams = {maxSpeed : 30};
+            lemlib::MoveToPoseParams poseParams = {maxSpeed : 70};
 
-            chassis.moveToPose(-22.6, -22, 180, 5000, poseParams);
+            chassis.moveToPose(-22.6, -18, -180, 4000, poseParams);
             chassis.waitUntilDone();
-            pros::delay(2000);
-            chassis.moveToPose(-51.062, -47.152, -90, 5000, poseParams);
+            chassis.moveToPose(-53, -48.5, -90, 4000, poseParams);
             chassis.waitUntil(30);
             tubeSolenoid.set_value(true);
             chassis.waitUntilDone();
 
             lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 2, pose.y, pose.theta, 500);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 3, pose.y, pose.theta, 500);  // nudge forward a bit
+            pros::delay(800);
             chassis.moveToPose(pose.x, pose.y, pose.theta, 500);      // straighten out
-            chassis.moveToPose(pose.x - 2, pose.y, pose.theta, 500);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 5, pose.y, pose.theta, 700);  // nudge forward a bit
+
             pros::delay(1000);
-            pose = chassis.getPose();
-            chassis.moveToPose(pose.x + 26.5, pose.y, -pose.theta, 2000);  // back up to score
-            chassis.waitUntil(10);
-
             tubeSolenoid.set_value(false);
-            chassis.waitUntilDone();
+            chassis.moveToPose(pose.x + 6, pose.y, pose.theta, 2000);  // back up no turn
 
-            // score
-            hoodSolenoid.set_value(true);
+            poseParams = {maxSpeed : 50};
+
+            pose = chassis.getPose();
+            chassis.moveToPose(pose.x + 25, pose.y, -pose.theta, 2000, poseParams);  // back up to score
+            chassis.waitUntil(4);
             indexRoller.move_velocity(200);
+            hoodSolenoid.set_value(true);
+            chassis.waitUntilDone();
 
             break;
         }
@@ -353,7 +354,7 @@ void controlDrivetrain() {
     if (l1CurrentState && !l1Pressed) {
         // Toggle between modes
         driveMode = (driveMode == DriveMode::TANK) ? DriveMode::ARCADE : DriveMode::TANK;
-        controller.clear_line(1);
+
         controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
     }
     l1Pressed = l1CurrentState;
