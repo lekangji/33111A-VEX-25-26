@@ -267,7 +267,7 @@ void initialize() {
 
     // Display auton selection interface
     autonSelectorTask = new pros::Task(autonSelector, nullptr, "Auton Selector");
-    autonSelectorTask->set_priority(4);  // prio ranges from 1-16, default 8
+    autonSelectorTask->set_priority(6);  // prio ranges from 1-16, default 8
 }
 
 void competition_initialize() {
@@ -313,8 +313,7 @@ void autonomous() {
             lemlib::Pose pose = chassis.getPose();
             chassis.moveToPose(pose.x - 3, pose.y, pose.theta, 500);  // nudge forward a bit
             pros::delay(800);
-            chassis.moveToPose(pose.x, pose.y, pose.theta, 500);      // straighten out
-            chassis.moveToPose(pose.x - 5, pose.y, pose.theta, 700);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 5, pose.y, pose.theta, 1200);  // nudge forward a bit
 
             pros::delay(1000);
             tubeSolenoid.set_value(false);
@@ -375,8 +374,8 @@ void controlDrivetrain() {
 bool isOtherAllianceBlockDetected() {
     if (COLOR_SORT_ENABLED) {
         // Sort by color
-        int proximity = optical.get_proximity();
-        if (proximity > 40) {
+        int proximity = optical.get_proximity();  // higher = closer
+        if (proximity > 35) {
             // object detected
             double hue = optical.get_hue();
             if (hue >= 300 && hue <= 360) {  // detected red
