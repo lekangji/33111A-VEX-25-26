@@ -127,7 +127,7 @@ const AutonRoute autonRoutes[] = {
 const int NUM_AUTONS = 6;
 
 bool autonLocked = true;  // whether the auton selection is confirmed yet
-int autonSelection = 2;
+int autonSelection = 1;
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
 // ASSET(redright_txt);
@@ -281,16 +281,16 @@ void relativeMotions() {
 void autonomous() {
     allianceColor = autonRoutes[autonSelection].alliance;  // sync alliance color with current autonomous choice
 
-    lemlib::MoveToPoseParams poseParams = {maxSpeed : 70};
+    lemlib::MoveToPoseParams poseParams = {.maxSpeed = 70};
 
     switch (autonSelection) {
-        case 0:
-            // Red Nothing - do nothing
+        case 0:  // Red Nothing - do nothing
+        case 3:  // Blue Nothing - do nothing
             break;
-        case 1: {
+        case 4:    // Blue Left
+        case 1: {  // Red left
             chassis.setPose(-48.821, 8.244, 90);
 
-            // Red Left
             topRoller.move_velocity(200);
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
@@ -332,7 +332,7 @@ void autonomous() {
             pros::delay(1000);
             tubeSolenoid.set_value(false);
             chassis.moveToPose(pose.x, pose.y, -90, 2000, poseParams, false);  // back up no turn
-            poseParams = {maxSpeed : 50};
+            poseParams = {.maxSpeed = 50};
 
             pose = chassis.getPose();
             chassis.moveToPose(pose.x + 17, pose.y, 90, 2000, poseParams);  // back up to score
@@ -343,10 +343,10 @@ void autonomous() {
 
             break;
         }
-        case 2: {
+        case 5:    // Blue Right
+        case 2: {  // Red Right
             chassis.setPose(-48.821, -8.244, 90);
 
-            // Red Right
             topRoller.move_velocity(200);
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
@@ -374,7 +374,7 @@ void autonomous() {
             tubeSolenoid.set_value(false);
             chassis.moveToPose(pose.x + 6, pose.y, pose.theta, 2000);  // back up no turn
 
-            poseParams = {maxSpeed : 50};
+            poseParams = {.maxSpeed = 50};
 
             pose = chassis.getPose();
             chassis.moveToPose(pose.x + 25, pose.y, -pose.theta, 2000, poseParams);  // back up to score
@@ -385,17 +385,6 @@ void autonomous() {
 
             break;
         }
-        case 3:
-            // Blue Nothing - do nothing
-            break;
-        case 4:
-            // Blue Left
-            // chassis.follow(blue_left, 15, 2000);  // lookahead,timeout
-            break;
-        case 5:
-            // Blue Right
-            // chassis.follow(blue_right, 15, 2000);  // lookahead,timeout
-            break;
         default:
             // Do nothing (basically case 0)
             break;
