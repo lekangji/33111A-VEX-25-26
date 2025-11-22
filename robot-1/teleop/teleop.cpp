@@ -48,7 +48,7 @@ lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
                               12.45,                       // track width (dist between center of wheels width)
                               lemlib::Omniwheel::NEW_275,  // using 2.75 omnis
                               450,                         // drivetrain rpm
-                              2                            // horizontal drift used to 2 - check 6 (bc center traction - should be 8, 6 safer)
+                              6                            // horizontal drift is 6 (bc center traction - should be 8, 6 safer)
 );
 
 // lateral motion controller
@@ -127,7 +127,7 @@ const AutonRoute autonRoutes[] = {
 const int NUM_AUTONS = 6;
 
 bool autonLocked = true;  // whether the auton selection is confirmed yet
-int autonSelection = 1;
+int autonSelection = 2;
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
 // ASSET(redright_txt);
@@ -529,13 +529,14 @@ void controlIntake() {
         case IntakeMode::LOW_GOAL:  // note top roller is unneeded here
             backRoller.move_velocity(200);
             frontRoller.move_velocity(-200);
-            indexRoller.move_velocity(200);
+            topRoller.move_velocity(0);
+            indexRoller.move_velocity(100);
             break;
         case IntakeMode::TOP_GOAL:
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
             topRoller.move_velocity(200);
-            indexRoller.move_velocity(200);
+            indexRoller.move_velocity(150);
             break;
         case IntakeMode::OFF:
         default:
