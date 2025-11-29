@@ -26,8 +26,9 @@ enum class IntakeMode {
 
 // ### HARDWARE ###
 // Pneumatics
-pros::adi::DigitalOut hoodSolenoid('A');  // hood solenoid
-pros::adi::DigitalOut tubeSolenoid('B');  // tube solenoid
+pros::adi::DigitalOut hoodSolenoid('A');     // hood solenoid
+pros::adi::DigitalOut tubeSolenoid('B');     // tube solenoid
+pros::adi::DigitalOut sweeperSolenoid('C');  // sweeper solenoid
 
 pros::Imu inertial(4);      // inertial sensor
 pros::Optical optical(18);  // optical sensor for intake detection
@@ -142,10 +143,13 @@ DriveMode driveMode = DriveMode::ARCADE;  // default drive mode
 IntakeMode intakeMode = IntakeMode::OFF;
 bool tubeMechDeployed = false;
 
+bool sweeperMechDeployed = false;
+
 // Button press tracking to detect new presses
 bool r1Pressed = false;
 bool r2Pressed = false;
 bool l1Pressed = false;
+bool l2Pressed = false;
 bool aPressed = false;
 bool bPressed = false;
 bool xPressed = false;
@@ -547,6 +551,16 @@ void controlTubeMech() {
     yPressed = yCurrent;
 }
 
+void controlSweeperMech() {
+    // Toggles the sweeper mech piston with the L2 button
+    bool l2Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+    if (l2Current && !l2Pressed) {
+        sweeperMechDeployed = !sweeperMechDeployed;
+        sweeperSolenoid.set_value(!sweeperMechDeployed);  // the mech is deployed whenever the solenoid is retracted
+    }
+    l2Pressed = l2Current;
+}
+
 void opcontrol() {
     allianceColor = autonRoutes[autonSelection].alliance;  // ensure teleop color matches selected route
 
@@ -565,6 +579,7 @@ void opcontrol() {
         controlDrivetrain();
         controlIntake();
         controlTubeMech();
+        controlSweeperMech();
         ticks++;
         pros::delay(LOOP_DELAY);
     }
