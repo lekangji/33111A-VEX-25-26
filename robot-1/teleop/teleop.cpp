@@ -128,7 +128,7 @@ const AutonRoute autonRoutes[] = {
 const int NUM_AUTONS = 6;
 
 bool autonLocked = true;  // whether the auton selection is confirmed yet
-int autonSelection = 1;
+int autonSelection = 2;
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
 // ASSET(redright_txt);
@@ -278,14 +278,10 @@ void competition_initialize() {
     // This function runs after initialize() and before autonomous or opcontrol
 }
 
-void relativeMotions() {
-    // Function to perform relative motions based on current pose
-}
-
 void autonomous() {
     allianceColor = autonRoutes[autonSelection].alliance;  // sync alliance color with current autonomous choice
 
-    lemlib::MoveToPoseParams poseParams = {.maxSpeed = 70};
+    lemlib::MoveToPoseParams poseParams = {.maxSpeed = 90};
 
     switch (autonSelection) {
         case 0:  // Red Nothing - do nothing
@@ -298,15 +294,12 @@ void autonomous() {
             topRoller.move_velocity(200);
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
-
             hoodSolenoid.set_value(false);
 
-            // chassis.moveToPose(-30, 16, 45, 2500, poseParams, false);
-
-            chassis.moveToPose(-22.6, 22.6, 45, 2500, poseParams, false);
+            chassis.moveToPose(-23.5, 23.5, 45, 2500, poseParams, false);  // grab the 3 balls
 
             chassis.moveToPose(-14.5, 14.5, 135, 2500, poseParams);
-            chassis.waitUntil(4);  // 3 could work
+            chassis.waitUntil(4);  // (3)
             // outtake into middle goal
             indexRoller.move_velocity(200);
             topRoller.move_velocity(-200);
@@ -318,29 +311,26 @@ void autonomous() {
             topRoller.move_velocity(200);
 
             // back up a lil
-            chassis.moveToPose(-20, 20, 135, 1500, poseParams, false);
+            chassis.moveToPose(-20, 20, 135, 1000, poseParams, false);
 
-            chassis.moveToPose(-46, 45.5, -45, 4000, poseParams);
-            chassis.waitUntil(30);
+            chassis.moveToPose(-48, 51, -45, 4000, poseParams, false);
+
+            chassis.turnToHeading(-90, 1500, {}, false);
+
             tubeSolenoid.set_value(true);
-            chassis.waitUntilDone();
-
-            chassis.turnToHeading(-90, 1500);
 
             lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 12, pose.y, -90, 700, poseParams, false);  // nudge forward a bit
-            pros::delay(1200);
-            chassis.moveToPose(pose.x - 3, pose.y, -90, 1200, poseParams, false);   // nudge forward a bit
-            chassis.moveToPose(pose.x - 12, pose.y, -90, 1200, poseParams, false);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 12.5, 51, -90, 1500, {.maxSpeed = 40}, false);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 12, 51, -90, 500, {.maxSpeed = 20}, false);     // nudge forward a bit
+            chassis.moveToPose(pose.x - 12.5, 51, -90, 3000, {.maxSpeed = 20}, false);  // nudge forward a bit
 
-            pros::delay(1000);
+            chassis.moveToPoint(pose.x - 7, 51, 2000, {}, false);  // back up no turn
             tubeSolenoid.set_value(false);
-            chassis.moveToPose(pose.x, pose.y, -90, 2000, poseParams, false);  // back up no turn
-            poseParams = {.maxSpeed = 50};
 
-            pose = chassis.getPose();
-            chassis.moveToPose(pose.x + 17, pose.y, 90, 2000, poseParams);  // back up to score
-            chassis.waitUntil(4);
+            chassis.turnToHeading(90, 1500, {}, false);
+
+            chassis.moveToPose(pose.x + 12, 52, 90, 3000, {.maxSpeed = 50});  // back up to score
+            chassis.waitUntil(2);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
@@ -348,41 +338,53 @@ void autonomous() {
             break;
         }
         case 5:    // Blue Right
-        case 2: {  // Red Right
+        case 2: {  // Red Right (WIP!)
             chassis.setPose(-48.821, -8.244, 90);
 
             topRoller.move_velocity(200);
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
-
             hoodSolenoid.set_value(false);
 
-            // chassis.follow(redright_txt, 10, 10000);  // lookahead,timeout
-            // chassis.waitUntil(48);                    // wait 48 inches
-            // tubeSolenoid.set_value(true);
-            // chassis.waitUntilDone();
+            chassis.moveToPose(-23.5, -23.5, 180 - 45, 2500, poseParams, false);  // grab the 3 balls
 
-            chassis.moveToPose(-22.6, -18, -180, 4000, poseParams);
+            chassis.moveToPose(-14.5, -14.5, 180 - 135, 2500, poseParams);
+            chassis.waitUntil(4);  // (3)
+
+            // outtake into lower goal
+            frontRoller.move_velocity(-200);
+            topRoller.move_velocity(0);
+            indexRoller.move_velocity(100);
+
             chassis.waitUntilDone();
-            chassis.moveToPose(-53, -48.5, -90, 4000, poseParams);
-            chassis.waitUntil(30);
+            pros::delay(1500);
+
+            // switch back
+            frontRoller.move_velocity(200);
+            indexRoller.move_velocity(0);
+            topRoller.move_velocity(200);
+
+            // back up a lil
+            chassis.moveToPose(-20, -20, 180 - 135, 1000, poseParams, false);
+
+            chassis.moveToPose(-48, -51, 180 + 45, 4000, poseParams, false);
+
+            chassis.turnToHeading(-90, 1500, {}, false);
+
             tubeSolenoid.set_value(true);
-            chassis.waitUntilDone();
 
             lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 3, pose.y, pose.theta, 500);  // nudge forward a bit
-            pros::delay(800);
-            chassis.moveToPose(pose.x - 5, pose.y, pose.theta, 1200);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 12.5, -51, -90, 1500, {.maxSpeed = 40}, false);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 12, -51, -90, 500, {.maxSpeed = 20}, false);     // nudge forward a bit
+            chassis.moveToPose(pose.x - 12.5, -51, -90, 3000, {.maxSpeed = 20}, false);  // nudge forward a bit
 
-            pros::delay(1000);
+            chassis.moveToPoint(pose.x - 7, -51, 2000, {}, false);  // back up no turn
             tubeSolenoid.set_value(false);
-            chassis.moveToPose(pose.x + 6, pose.y, pose.theta, 2000);  // back up no turn
 
-            poseParams = {.maxSpeed = 50};
+            chassis.turnToHeading(90, 1500, {}, false);
 
-            pose = chassis.getPose();
-            chassis.moveToPose(pose.x + 25, pose.y, -pose.theta, 2000, poseParams);  // back up to score
-            chassis.waitUntil(4);
+            chassis.moveToPose(pose.x + 12, -52, 90, 3000, {.maxSpeed = 50});  // back up to score
+            chassis.waitUntil(2);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
@@ -570,6 +572,8 @@ void opcontrol() {
         delete autonSelectorTask;
         autonSelectorTask = nullptr;
     }
+
+    chassis.cancelAllMotions();  // cancel any auton motions
 
     pros::lcd::clear_line(1);
     pros::lcd::print(2, "Status: DRIVING");
