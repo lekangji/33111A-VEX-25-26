@@ -61,7 +61,7 @@ lemlib::ControllerSettings lateralController(14.5,  // proportional gain (kP) (1
                                              200,   // small error range timeout, in milliseconds
                                              2,     // large error range, in inches
                                              500,   // large error range timeout, in milliseconds
-                                             20     // maximum acceleration (slew)
+                                             15     // maximum acceleration (slew)
 );
 
 // angular motion controller
@@ -128,7 +128,7 @@ const AutonRoute autonRoutes[] = {
 const int NUM_AUTONS = 6;
 
 bool autonLocked = true;  // whether the auton selection is confirmed yet
-int autonSelection = 2;
+int autonSelection = 1;
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
 // ASSET(redright_txt);
@@ -257,6 +257,7 @@ void initialize() {
     printf("Now calibrating inertial + chassis...\n");
     // calibrate chassis + initialize lcd
     inertial.reset();
+    pros::delay(200);
     chassis.calibrate();
 
     pros::lcd::print(0, "Auton (%i out of %i): %s", autonSelection + 1, NUM_AUTONS, autonRoutes[autonSelection].name);
@@ -296,9 +297,9 @@ void autonomous() {
             frontRoller.move_velocity(200);
             hoodSolenoid.set_value(false);
 
-            chassis.moveToPose(-23.5, 23.5, 45, 2500, poseParams, false);  // grab the 3 balls
+            chassis.moveToPose(-24, 24, 45, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
 
-            chassis.moveToPose(-14.5, 14.5, 135, 2500, poseParams);
+            chassis.moveToPose(-14.5, 14.5, 135, 2500, {.maxSpeed = 70});
             chassis.waitUntil(4);  // (3)
             // outtake into middle goal
             indexRoller.move_velocity(200);
@@ -311,26 +312,23 @@ void autonomous() {
             topRoller.move_velocity(200);
 
             // back up a lil
-            chassis.moveToPose(-20, 20, 135, 1000, poseParams, false);
+            chassis.moveToPose(-24, 24, 135, 2500, {.forwards = false, .maxSpeed = 50},
+                               false);
 
-            chassis.moveToPose(-48, 51, -45, 4000, poseParams, false);
-
-            chassis.turnToHeading(-90, 1500, {}, false);
+            chassis.moveToPose(-48, 47, -90, 4000, {.lead = 0.35, .maxSpeed = 80}, false);
 
             tubeSolenoid.set_value(true);
 
             lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 12.5, 51, -90, 1500, {.maxSpeed = 40}, false);  // nudge forward a bit
-            chassis.moveToPose(pose.x - 12, 51, -90, 500, {.maxSpeed = 20}, false);     // nudge forward a bit
-            chassis.moveToPose(pose.x - 12.5, 51, -90, 3000, {.maxSpeed = 20}, false);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 12.9, 47, -90, 1500, {.maxSpeed = 60}, false);  // nudge forward a bit
+            chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);     // nudge forward a bit
+            chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);    // nudge forward a lot
 
-            chassis.moveToPoint(pose.x - 7, 51, 2000, {}, false);  // back up no turn
+            chassis.moveToPoint(pose.x - 7, 47, 2000, {.maxSpeed = 90, .minSpeed = 10}, false);  // back up no turn
             tubeSolenoid.set_value(false);
 
-            chassis.turnToHeading(90, 1500, {}, false);
-
-            chassis.moveToPose(pose.x + 12, 52, 90, 3000, {.maxSpeed = 50});  // back up to score
-            chassis.waitUntil(2);
+            chassis.moveToPose(pose.x + 11, 49, 90, 3000, {.maxSpeed = 70});  // back up to score
+            chassis.waitUntil(4);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
