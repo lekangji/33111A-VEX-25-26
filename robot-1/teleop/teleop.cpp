@@ -312,23 +312,24 @@ void autonomous() {
             topRoller.move_velocity(200);
 
             // back up a lil
-            chassis.moveToPose(-24, 24, 135, 2500, {.forwards = false, .maxSpeed = 50},
-                               false);
+            chassis.moveToPose(-24, 24, 135, 2500, {.forwards = false, .maxSpeed = 50, .minSpeed = 10}, false);
 
             chassis.moveToPose(-48, 47, -90, 4000, {.lead = 0.35, .maxSpeed = 80}, false);
 
             tubeSolenoid.set_value(true);
 
             lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 12.9, 47, -90, 1500, {.maxSpeed = 60}, false);  // nudge forward a bit
-            chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);     // nudge forward a bit
-            chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);    // nudge forward a lot
+            chassis.moveToPose(pose.x - 15, 47, -90, 1500, {.maxSpeed = 60}, false);  // nudge forward a bit
+            pros::delay(3000);
 
-            chassis.moveToPoint(pose.x - 7, 47, 2000, {.maxSpeed = 90, .minSpeed = 10}, false);  // back up no turn
+            // chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);   // nudge forward a bit
+            // chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);  // nudge forward a lot
+
+            chassis.moveToPoint(pose.x - 7, 47, 2000, {.maxSpeed = 80, .minSpeed = 10}, false);  // back up no turn
             tubeSolenoid.set_value(false);
 
-            chassis.moveToPose(pose.x + 11, 49, 90, 3000, {.maxSpeed = 70});  // back up to score
-            chassis.waitUntil(4);
+            chassis.moveToPose(pose.x + 11, 48, 90, 3000, {.maxSpeed = 70});  // back up to score
+            chassis.waitUntil(3);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
