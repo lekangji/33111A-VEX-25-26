@@ -28,7 +28,7 @@ enum class IntakeMode {
 // Pneumatics
 pros::adi::DigitalOut hoodSolenoid('A');     // hood solenoid
 pros::adi::DigitalOut tubeSolenoid('B');     // tube solenoid
-pros::adi::DigitalOut sweeperSolenoid('C');  // sweeper solenoid
+pros::adi::DigitalOut descoreSolenoid('C');  // sweeper solenoid
 
 pros::Imu inertial(4);      // inertial sensor
 pros::Optical optical(18);  // optical sensor for intake detection
@@ -143,7 +143,7 @@ DriveMode driveMode = DriveMode::ARCADE;  // default drive mode
 IntakeMode intakeMode = IntakeMode::OFF;
 bool tubeMechDeployed = false;
 
-bool sweeperMechDeployed = false;
+bool descoreMechDeployed = false;
 
 // Button press tracking to detect new presses
 bool r1Pressed = false;
@@ -248,6 +248,7 @@ void initialize() {
     indexRoller.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
 
     // configure optical sensor
+    optical.disable_gesture();
     optical.set_integration_time(OPTICAL_INTEGRATION_TIME);  // 3-712 ms limits
     optical.set_led_pwm(OPTICAL_LED_PWM);                    // 0-100
 
@@ -300,7 +301,7 @@ void autonomous() {
             chassis.moveToPose(-24, 24, 45, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
 
             chassis.moveToPose(-14.5, 14.5, 135, 2500, {.maxSpeed = 70});
-            chassis.waitUntil(4);  // (3)
+            chassis.waitUntil(3);  // (4)
             // outtake into middle goal
             indexRoller.move_velocity(200);
             topRoller.move_velocity(-200);
@@ -320,7 +321,7 @@ void autonomous() {
 
             lemlib::Pose pose = chassis.getPose();
             chassis.moveToPose(pose.x - 15, 47, -90, 1500, {.maxSpeed = 60}, false);  // nudge forward a bit
-            pros::delay(3000);
+            pros::delay(2000);
 
             // chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);   // nudge forward a bit
             // chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);  // nudge forward a lot
@@ -329,7 +330,7 @@ void autonomous() {
             tubeSolenoid.set_value(false);
 
             chassis.moveToPose(pose.x + 11, 48, 90, 3000, {.maxSpeed = 70});  // back up to score
-            chassis.waitUntil(3);
+            chassis.waitUntil(3.5);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
@@ -552,12 +553,12 @@ void controlTubeMech() {
     yPressed = yCurrent;
 }
 
-void controlSweeperMech() {
+void controlDescoreMech() {
     // Toggles the sweeper mech piston with the L2 button
     bool l2Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
     if (l2Current && !l2Pressed) {
-        sweeperMechDeployed = !sweeperMechDeployed;
-        sweeperSolenoid.set_value(!sweeperMechDeployed);  // the mech is deployed whenever the solenoid is retracted
+        descoreMechDeployed = !descoreMechDeployed;
+        descoreSolenoid.set_value(!descoreMechDeployed);  // the mech is deployed whenever the solenoid is retracted
     }
     l2Pressed = l2Current;
 }
@@ -582,7 +583,7 @@ void opcontrol() {
         controlDrivetrain();
         controlIntake();
         controlTubeMech();
-        controlSweeperMech();
+        controlDescoreMech();
         ticks++;
         pros::delay(LOOP_DELAY);
     }
