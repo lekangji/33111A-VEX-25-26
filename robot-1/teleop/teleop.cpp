@@ -128,7 +128,7 @@ const AutonRoute autonRoutes[] = {
 const int NUM_AUTONS = 6;
 
 bool autonLocked = true;  // whether the auton selection is confirmed yet
-int autonSelection = 1;
+int autonSelection = 2;
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
 // ASSET(redright_txt);
@@ -283,8 +283,6 @@ void competition_initialize() {
 void autonomous() {
     allianceColor = autonRoutes[autonSelection].alliance;  // sync alliance color with current autonomous choice
 
-    lemlib::MoveToPoseParams poseParams = {.maxSpeed = 90};
-
     switch (autonSelection) {
         case 0:  // Red Nothing - do nothing
         case 3:  // Blue Nothing - do nothing
@@ -326,10 +324,10 @@ void autonomous() {
             // chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);   // nudge forward a bit
             // chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);  // nudge forward a lot
 
-            chassis.moveToPoint(pose.x - 7, 47, 2000, {.maxSpeed = 80, .minSpeed = 10}, false);  // back up no turn
+            chassis.moveToPoint(pose.x - 7, 47, 2000, {.forwards = false, .maxSpeed = 80, .minSpeed = 10}, false);  // back up no turn
             tubeSolenoid.set_value(false);
 
-            chassis.moveToPose(pose.x + 11, 48, 90, 3000, {.maxSpeed = 70});  // back up to score
+            chassis.moveToPose(pose.x + 11, 48, 90, 4000, {.maxSpeed = 70});  // back up to score
             chassis.waitUntil(3.5);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
@@ -346,45 +344,25 @@ void autonomous() {
             frontRoller.move_velocity(200);
             hoodSolenoid.set_value(false);
 
-            chassis.moveToPose(-23.5, -23.5, 180 - 45, 2500, poseParams, false);  // grab the 3 balls
+            chassis.moveToPose(-23.5, -23.5, 180 - 45, 2500, {.maxSpeed = 80}, false);  // grab the 3 balls
 
-            chassis.moveToPose(-14.5, -14.5, 180 - 135, 2500, poseParams);
-            chassis.waitUntil(4);  // (3)
-
-            // outtake into lower goal
-            frontRoller.move_velocity(-200);
-            topRoller.move_velocity(0);
-            indexRoller.move_velocity(100);
-
-            chassis.waitUntilDone();
-            pros::delay(1500);
-
-            // switch back
-            frontRoller.move_velocity(200);
-            indexRoller.move_velocity(0);
-            topRoller.move_velocity(200);
-
-            // back up a lil
-            chassis.moveToPose(-20, -20, 180 - 135, 1000, poseParams, false);
-
-            chassis.moveToPose(-48, -51, 180 + 45, 4000, poseParams, false);
+            pros::delay(500);
+            chassis.moveToPose(-48, -47, 180 + 45, 4000, {.maxSpeed = 100}, false);
 
             chassis.turnToHeading(-90, 1500, {}, false);
-
             tubeSolenoid.set_value(true);
 
-            lemlib::Pose pose = chassis.getPose();
-            chassis.moveToPose(pose.x - 12.5, -51, -90, 1500, {.maxSpeed = 40}, false);  // nudge forward a bit
-            chassis.moveToPose(pose.x - 12, -51, -90, 500, {.maxSpeed = 20}, false);     // nudge forward a bit
-            chassis.moveToPose(pose.x - 12.5, -51, -90, 3000, {.maxSpeed = 20}, false);  // nudge forward a bit
+            pros::delay(200);
 
-            chassis.moveToPoint(pose.x - 7, -51, 2000, {}, false);  // back up no turn
+            lemlib::Pose pose = chassis.getPose();
+            chassis.moveToPose(pose.x - 15, -47, -90, 1500, {.maxSpeed = 60}, false);  // nudge forward a bit
+            pros::delay(2000);
+
+            chassis.moveToPose(pose.x - 4, -47, -90, 2000, {.forwards = false, .maxSpeed = 80, .minSpeed = 10}, false);  // back up no turn
             tubeSolenoid.set_value(false);
 
-            chassis.turnToHeading(90, 1500, {}, false);
-
-            chassis.moveToPose(pose.x + 12, -52, 90, 3000, {.maxSpeed = 50});  // back up to score
-            chassis.waitUntil(2);
+            chassis.moveToPose(pose.x + 16.5, -48, 90, 4000, {.maxSpeed = 70});  // back up to score
+            chassis.waitUntil(5);
             indexRoller.move_velocity(200);
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
