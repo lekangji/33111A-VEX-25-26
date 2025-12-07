@@ -24,6 +24,12 @@ enum class IntakeMode {
     TOP_GOAL
 };
 
+struct RumbleEvent {
+    int timeMs;           // remaining match time to trigger
+    const char* pattern;  // rumble pattern
+    bool triggered;       // has it fired already
+};
+
 // ### HARDWARE ###
 // Pneumatics
 pros::adi::DigitalOut hoodSolenoid('A');     // hood solenoid
@@ -108,8 +114,9 @@ const int OPTICAL_INTEGRATION_TIME = LOOP_DELAY * 3;  // 60 ms
 const int COLORSORT_TICKER_LIMIT = 10;
 const int OPTICAL_LED_PWM = 100;
 
-const bool COLOR_SORT_ENABLED = true;   // whether color sorting is enabled
-const bool DEBUG_PRINT_ENABLED = true;  // whether debug printing task is enabled
+const bool COLOR_SORT_ENABLED = true;          // whether color sorting is enabled
+const bool DEBUG_PRINT_ENABLED = true;         // whether debug printing task is enabled
+const bool CONTROLLER_DISPLAY_ENABLED = true;  // whether controller display task is enabled
 
 // ### AUTON VARIABLES ###
 struct AutonRoute {
@@ -159,6 +166,47 @@ bool yPressed = false;
 pros::Task* debugPrintTask = nullptr;
 pros::Task* autonSelectorTask = nullptr;
 
+void controllerDisplay(void* param) {
+    const double MATCH_LENGTH_MS = 1.75 * 60 * 1000;  // 1:45 match
+    const double matchStart = pros::millis();         // start time of driver control
+    const int MOTOR_OVERHEAT_THRESHOLD = 55;          // 55 Celsius (https://www.vexforum.com/t/v5-overheating-threshold/64984/2)
+
+    // Define all rumble events in one array
+    RumbleEvent rumbles[] = {
+        {60000, "..", false},   // 1m
+        {30000, "...", false},  // 30s
+        {10000, "...", false}   // 10s
+    };
+
+    while (true) {
+        lemlib::Pose pose = chassis.getPose();
+        controller.print(0, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
+        controller.print(2, 0, "Intake: %s", (intakeMode == IntakeMode::OFF) ? "OFF       " : (intakeMode == IntakeMode::FORWARD)   ? "FORWARD   "
+                                                                                          : (intakeMode == IntakeMode::REVERSE)     ? "REVERSE   "
+                                                                                          : (intakeMode == IntakeMode::LOW_GOAL)    ? "LOW GOAL  "
+                                                                                          : (intakeMode == IntakeMode::MIDDLE_GOAL) ? "MIDDLE GOAL"
+                                                                                                                                    : "TOP GOAL  ");
+
+        double voltage = pros::battery::get_voltage() / 1000.0;
+        double current = pros::battery::get_current() / 1000.0;
+        double power = voltage * current;
+        controller.print(3, 0, "Battery: %.2fV, %.2fA, %.2fW", voltage, current, power);
+
+        double elapsed = pros::millis() - matchStart;
+        double remaining = MATCH_LENGTH_MS - elapsed;
+
+        // Process all rumble events
+        for (auto& event : rumbles) {
+            if (!event.triggered && remaining <= event.timeMs) {
+                controller.rumble(event.pattern);
+                event.triggered = true;
+            }
+        }
+
+        pros::delay(200);  // loop ~5Hz
+    }
+}
+
 void debugPrint(void* param) {
     // Separate task for printing robot position and status to screens
     while (true) {
@@ -168,9 +216,6 @@ void debugPrint(void* param) {
         pros::lcd::print(3, "X: %.1f", pose.x);
         pros::lcd::print(4, "Y: %.1f", pose.y);
         pros::lcd::print(5, "T: %.1f", pose.theta);
-
-        // Print to controller screen
-        controller.print(0, 0, "X:%.1f Y:%.1f T:%.1f", pose.x, pose.y, pose.theta);
 
         pros::delay(200);
     }
@@ -381,8 +426,6 @@ void controlDrivetrain() {
     if (l1CurrentState && !l1Pressed) {
         // Toggle between modes
         driveMode = (driveMode == DriveMode::TANK) ? DriveMode::ARCADE : DriveMode::TANK;
-
-        controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
     }
     l1Pressed = l1CurrentState;
 
@@ -555,7 +598,11 @@ void opcontrol() {
 
     pros::lcd::clear_line(1);
     pros::lcd::print(2, "Status: DRIVING");
-    controller.print(1, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
+
+    if (CONTROLLER_DISPLAY_ENABLED) {
+        pros::Task controllerDisplayTask = pros::Task(controllerDisplay, nullptr, "Controller Display");
+        controllerDisplayTask.set_priority(5);
+    }
 
     while (true) {
         controlDrivetrain();
