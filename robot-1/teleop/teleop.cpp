@@ -141,8 +141,8 @@ AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default 
 // ASSET(redright_txt);
 
 // ### GLOBAL VARIABLES ###
-int ticks = 0;            // loop tick counter
-int colorSortTicker = 0;  // tick count for colorsorting
+int colorSortTicker = 0;    // tick count for colorsorting
+bool opticalLedOn = false;  // track last set PWM value
 
 DriveMode driveMode = DriveMode::ARCADE;  // default drive mode
 
@@ -162,9 +162,11 @@ bool bPressed = false;
 bool xPressed = false;
 bool yPressed = false;
 
-// Global task pointers for proper task management
+// Global task pointers for task management
 pros::Task* debugPrintTask = nullptr;
 pros::Task* autonSelectorTask = nullptr;
+pros::Task* controlIntakeTask = nullptr;
+pros::Task* controllerDisplayTask = nullptr;
 
 void controllerDisplay(void* param) {
     const double MATCH_LENGTH_MS = 1.75 * 60 * 1000;  // 1:45 match
@@ -173,25 +175,27 @@ void controllerDisplay(void* param) {
 
     // Define all rumble events in one array
     RumbleEvent rumbles[] = {
-        {60000, "..", false},   // 1m
-        {30000, "...", false},  // 30s
-        {10000, "...", false}   // 10s
+        {60000, "..", false},  // 1m
+        {30000, "..", false},  // 30s
+        {10000, "..", false}   // 10s
     };
 
-    while (true) {
+    while (true) {  // a 200ms loop with delay bc controller slow
         lemlib::Pose pose = chassis.getPose();
         controller.print(0, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
-        controller.print(2, 0, "Intake: %s", (intakeMode == IntakeMode::OFF) ? "OFF       " : (intakeMode == IntakeMode::FORWARD)   ? "FORWARD   "
+        pros::delay(50);
+        controller.print(1, 0, "Intake: %s", (intakeMode == IntakeMode::OFF) ? "OFF       " : (intakeMode == IntakeMode::FORWARD)   ? "FORWARD   "
                                                                                           : (intakeMode == IntakeMode::REVERSE)     ? "REVERSE   "
                                                                                           : (intakeMode == IntakeMode::LOW_GOAL)    ? "LOW GOAL  "
                                                                                           : (intakeMode == IntakeMode::MIDDLE_GOAL) ? "MIDDLE GOAL"
                                                                                                                                     : "TOP GOAL  ");
-
+        pros::delay(50);
         double voltage = pros::battery::get_voltage() / 1000.0;
         double current = pros::battery::get_current() / 1000.0;
         double power = voltage * current;
-        controller.print(3, 0, "Battery: %.2fV, %.2fA, %.2fW", voltage, current, power);
+        controller.print(2, 0, "Battery: %.2fV, %.2fA, %.2fW", voltage, current, power);
 
+        pros::delay(50);
         double elapsed = pros::millis() - matchStart;
         double remaining = MATCH_LENGTH_MS - elapsed;
 
@@ -203,7 +207,7 @@ void controllerDisplay(void* param) {
             }
         }
 
-        pros::delay(200);  // loop ~5Hz
+        pros::delay(50);
     }
 }
 
@@ -279,7 +283,7 @@ void autonSelector(void* param) {
 
 void initialize() {
     // Display initial selection and instructions
-    printf("Now initalizing motors.\n");
+    printf("Now initializing motors.\n");
 
     // fix up the 5.5w
     leftMotors.set_gearing(pros::MotorGears::green, 2);   // set gearing for 5.5w motor
@@ -295,7 +299,7 @@ void initialize() {
     // configure optical sensor
     optical.disable_gesture();
     optical.set_integration_time(OPTICAL_INTEGRATION_TIME);  // 3-712 ms limits
-    optical.set_led_pwm(OPTICAL_LED_PWM);                    // 0-100
+    optical.set_led_pwm(0);                                  // 0-100
 
     printf("Now initializing LCD...\n");
     pros::lcd::initialize();
@@ -316,13 +320,18 @@ void initialize() {
         debugPrintTask->set_priority(4);  // prio ranges from 1-16, default 8
     }
 
+    if (CONTROLLER_DISPLAY_ENABLED) {
+        controllerDisplayTask = new pros::Task(controllerDisplay, nullptr, "Controller Display");
+        controllerDisplayTask->set_priority(4);
+    }
+
     // Display auton selection interface
     autonSelectorTask = new pros::Task(autonSelector, nullptr, "Auton Selector");
     autonSelectorTask->set_priority(6);  // prio ranges from 1-16, default 8
-}
 
-void competition_initialize() {
-    // This function runs after initialize() and before autonomous or opcontrol
+    // Controls intake + colorsorting for both driver control + auton
+    controlIntakeTask = new pros::Task(controlIntake, nullptr, "Intake Control");
+    controlIntakeTask->set_priority(8);
 }
 
 void autonomous() {
@@ -336,9 +345,7 @@ void autonomous() {
         case 1: {  // Red left
             chassis.setPose(-48.821, 8.244, 90);
 
-            topRoller.move_velocity(200);
-            backRoller.move_velocity(200);
-            frontRoller.move_velocity(200);
+            intakeMode = IntakeMode::FORWARD;
             hoodSolenoid.set_value(false);
 
             chassis.moveToPose(-24, 24, 45, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
@@ -346,8 +353,7 @@ void autonomous() {
             chassis.moveToPose(-14.5, 14.5, 135, 2500, {.maxSpeed = 70});
             chassis.waitUntil(3);  // (4)
             // outtake into middle goal
-            indexRoller.move_velocity(200);
-            topRoller.move_velocity(-200);
+            intakeMode = IntakeMode::MIDDLE_GOAL;
             chassis.waitUntilDone();
             pros::delay(1500);
 
@@ -374,7 +380,7 @@ void autonomous() {
 
             chassis.moveToPose(pose.x + 11, 48, 90, 4000, {.maxSpeed = 70});  // back up to score
             chassis.waitUntil(3.5);
-            indexRoller.move_velocity(200);
+            intakeMode = IntakeMode::TOP_GOAL;
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
 
@@ -384,9 +390,7 @@ void autonomous() {
         case 2: {  // Red Right (WIP!)
             chassis.setPose(-48.821, -8.244, 90);
 
-            topRoller.move_velocity(200);
-            backRoller.move_velocity(200);
-            frontRoller.move_velocity(200);
+            intakeMode = IntakeMode::FORWARD;
             hoodSolenoid.set_value(false);
 
             chassis.moveToPose(-23.5, -23.5, 180 - 45, 2500, {.maxSpeed = 80}, false);  // grab the 3 balls
@@ -408,7 +412,7 @@ void autonomous() {
 
             chassis.moveToPose(pose.x + 16.5, -48, 90, 4000, {.maxSpeed = 70});  // back up to score
             chassis.waitUntil(5);
-            indexRoller.move_velocity(200);
+            intakeMode = IntakeMode::TOP_GOAL;
             hoodSolenoid.set_value(true);
             chassis.waitUntilDone();
 
@@ -459,77 +463,37 @@ bool isOtherAllianceBlockDetected() {
     return false;
 }
 
-void controlIntake() {
-    // Button R1 - Intake forward into bin
-    bool r1Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
-    if (r1Current && !r1Pressed) {
-        intakeMode = (intakeMode == IntakeMode::FORWARD) ? IntakeMode::OFF : IntakeMode::FORWARD;
-        if (intakeMode == IntakeMode::FORWARD) {
-            hoodSolenoid.set_value(false);
+void setIntake(IntakeMode mode, int ticks) {
+    if (mode != IntakeMode::FORWARD && mode != IntakeMode::TOP_GOAL) {
+        if (opticalLedOn) {
+            optical.set_led_pwm(0);
+            opticalLedOn = false;
         }
-    }
-    r1Pressed = r1Current;
-
-    // Button R2 - Outtake/reverse
-    bool r2Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
-    if (r2Current && !r2Pressed) {
-        intakeMode = (intakeMode == IntakeMode::REVERSE) ? IntakeMode::OFF : IntakeMode::REVERSE;
-    }
-    r2Pressed = r2Current;
-
-    // Button A - Cycle into middle goal
-    bool aCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
-    if (aCurrent && !aPressed) {
-        intakeMode = (intakeMode == IntakeMode::MIDDLE_GOAL) ? IntakeMode::OFF : IntakeMode::MIDDLE_GOAL;
-    }
-    aPressed = aCurrent;
-
-    // Button B - Cycle into low goal
-    bool bCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
-    if (bCurrent && !bPressed) {
-        intakeMode = (intakeMode == IntakeMode::LOW_GOAL) ? IntakeMode::OFF : IntakeMode::LOW_GOAL;
-    }
-    bPressed = bCurrent;
-
-    // Button X - Cycle into top goal
-    bool xCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
-    if (xCurrent && !xPressed) {
-        intakeMode = (intakeMode == IntakeMode::TOP_GOAL) ? IntakeMode::OFF : IntakeMode::TOP_GOAL;
-        if (intakeMode == IntakeMode::TOP_GOAL) {
-            hoodSolenoid.set_value(true);
-            // Ensure tube mech is retracted when going to top goal to make sure not out of size limit
-            if (tubeMechDeployed) {
-                tubeSolenoid.set_value(false);
-                tubeMechDeployed = false;
-            }
-        }
-    }
-    xPressed = xCurrent;
-
-    // Execute motor commands based on active mode
-    if (intakeMode != IntakeMode::FORWARD) {
         colorSortTicker = 0;
-    }
-
-    switch (intakeMode) {
-        case IntakeMode::FORWARD: {
-            if (ticks % (OPTICAL_INTEGRATION_TIME / LOOP_DELAY) == 0) {  // update every few ticks - eq to integration time
-                if (isOtherAllianceBlockDetected()) {
-                    colorSortTicker = std::min(colorSortTicker + 5, COLORSORT_TICKER_LIMIT);
-                } else {
-                    colorSortTicker = std::max(colorSortTicker - 3, 0);
-                }
+    } else {
+        if (!opticalLedOn) {
+            optical.set_led_pwm(OPTICAL_LED_PWM);
+            opticalLedOn = true;
+        }
+        if (ticks % (OPTICAL_INTEGRATION_TIME / LOOP_DELAY) == 0) {  // update every few ticks - eq to integration time
+            if (isOtherAllianceBlockDetected()) {
+                colorSortTicker = std::min(colorSortTicker + 5, COLORSORT_TICKER_LIMIT);
+            } else {
+                colorSortTicker = std::max(colorSortTicker - 3, 0);
             }
+        }
+    }
+    // TODO: maybe make colorsort threshold > 5, then make decrease slower to compensate
+    // This way the sensor can double check to make sure the ball really is the right color
+    int topRollerSpeed = colorSortTicker >= 3 ? -200 : 200;
 
-            // TODO: maybe make colorsort threshold > 5, then make decrease slower to compensate
-            // This way the sensor can double check to make sure the ball really is the right color
-            int topRollerSpeed = colorSortTicker >= 3 ? -200 : 200;
+    switch (mode) {
+        case IntakeMode::FORWARD:
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
             topRoller.move_velocity(topRollerSpeed);
             indexRoller.move_velocity(0);
             break;
-        }
         case IntakeMode::REVERSE:
             backRoller.move_velocity(-200);
             frontRoller.move_velocity(-200);
@@ -542,7 +506,7 @@ void controlIntake() {
             topRoller.move_velocity(-200);
             indexRoller.move_velocity(200);
             break;
-        case IntakeMode::LOW_GOAL:  // note top roller is unneeded here
+        case IntakeMode::LOW_GOAL:
             backRoller.move_velocity(200);
             frontRoller.move_velocity(-200);
             topRoller.move_velocity(0);
@@ -551,7 +515,7 @@ void controlIntake() {
         case IntakeMode::TOP_GOAL:
             backRoller.move_velocity(200);
             frontRoller.move_velocity(200);
-            topRoller.move_velocity(200);
+            topRoller.move_velocity(topRollerSpeed);
             indexRoller.move_velocity(150);
             break;
         case IntakeMode::OFF:
@@ -561,6 +525,62 @@ void controlIntake() {
             topRoller.move_velocity(0);
             indexRoller.move_velocity(0);
             break;
+    }
+}
+
+void controlIntake(void* param) {
+    int ticks = 0;
+
+    while (true) {
+        // If in driver control, read them buttons, otherwise auton just uses the current intake mode
+        if (!pros::competition::is_autonomous()) {
+            // Button R1 - Intake forward into bin
+            bool r1Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+            if (r1Current && !r1Pressed) {
+                intakeMode = (intakeMode == IntakeMode::FORWARD) ? IntakeMode::OFF : IntakeMode::FORWARD;
+                if (intakeMode == IntakeMode::FORWARD) {
+                    hoodSolenoid.set_value(false);
+                }
+            }
+            r1Pressed = r1Current;
+
+            // Button R2 - Outtake/reverse
+            bool r2Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+            if (r2Current && !r2Pressed) {
+                intakeMode = (intakeMode == IntakeMode::REVERSE) ? IntakeMode::OFF : IntakeMode::REVERSE;
+            }
+            r2Pressed = r2Current;
+
+            // Button A - Cycle into middle goal
+            bool aCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+            if (aCurrent && !aPressed) {
+                intakeMode = (intakeMode == IntakeMode::MIDDLE_GOAL) ? IntakeMode::OFF : IntakeMode::MIDDLE_GOAL;
+            }
+            aPressed = aCurrent;
+
+            // Button B - Cycle into low goal
+            bool bCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+            if (bCurrent && !bPressed) {
+                intakeMode = (intakeMode == IntakeMode::LOW_GOAL) ? IntakeMode::OFF : IntakeMode::LOW_GOAL;
+            }
+            bPressed = bCurrent;
+
+            // Button X - Cycle into top goal
+            bool xCurrent = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
+            if (xCurrent && !xPressed) {
+                intakeMode = (intakeMode == IntakeMode::TOP_GOAL) ? IntakeMode::OFF : IntakeMode::TOP_GOAL;
+                if (intakeMode == IntakeMode::TOP_GOAL) {
+                    hoodSolenoid.set_value(true);
+                }
+            }
+            xPressed = xCurrent;
+        }
+
+        // Execute motor commands based on active mode
+        setIntake(intakeMode, ticks);
+        ticks++;
+
+        pros::delay(LOOP_DELAY);
     }
 }
 
@@ -599,17 +619,10 @@ void opcontrol() {
     pros::lcd::clear_line(1);
     pros::lcd::print(2, "Status: DRIVING");
 
-    if (CONTROLLER_DISPLAY_ENABLED) {
-        pros::Task controllerDisplayTask = pros::Task(controllerDisplay, nullptr, "Controller Display");
-        controllerDisplayTask.set_priority(5);
-    }
-
     while (true) {
         controlDrivetrain();
-        controlIntake();
         controlTubeMech();
         controlDescoreMech();
-        ticks++;
         pros::delay(LOOP_DELAY);
     }
 }
