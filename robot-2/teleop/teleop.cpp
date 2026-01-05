@@ -1,6 +1,8 @@
 #include "main.h"
 
 #include <algorithm>
+#include <set>
+#include <string>
 
 #include "lemlib/api.hpp"  // https://lemlib.readthedocs.io/en/stable/index.html
 
@@ -196,41 +198,45 @@ pros::Task* controllerDisplayTask = nullptr;
 void controllerDisplay(void* param) {
     const double driverStart = pros::millis();  // start time of driver control
 
-    bool lastState = false;
+    std::set<std::string> lastProblemMotors;
 
     while (true) {  // a 400ms loop with delay bc controller slow
+        // 1. Drive mode
         controller.print(0, 0, "Drive Mode: %s", (driveMode == DriveMode::TANK) ? "TANK  " : "ARCADE");
         pros::delay(100);
 
-        // Check for overheating motors and print names
+        // 2. Motor status (disconnect / overheat)
         std::string motorEvents;
+        std::set<std::string> currentProblemMotors;
+        bool newProblem = false;
         for (const auto& entry : motors) {
             pros::Motor motor(entry.port);
-            if (!motor.is_installed()) {  // motor disconnected
+
+            std::string prefix;
+            if (!motor.is_installed())
+                prefix = "D-";  // disconnect
+            else if (motor.get_temperature() >= MOTOR_OVERHEAT_THRESHOLD)
+                prefix = "O-";  // overheat
+
+            if (!prefix.empty()) {
+                currentProblemMotors.insert(entry.name);
                 if (!motorEvents.empty()) motorEvents += ' ';
-                motorEvents += "D-";
-                motorEvents += entry.name;
-            } else if (motor.get_temperature() >= MOTOR_OVERHEAT_THRESHOLD) {
-                if (!motorEvents.empty()) motorEvents += ' ';
-                motorEvents += "O-";
-                motorEvents += entry.name;
+                motorEvents += prefix + entry.name;
+
+                if (lastProblemMotors.find(entry.name) == lastProblemMotors.end())
+                    newProblem = true;
             }
-            pros::delay(20);  // small delay to avoid flooding
+
+            pros::delay(20);
         }
-        if (!motorEvents.empty()) {
-            if (!lastState) {
-                controller.rumble("--");  // rumble on new motor event
-            }
-            pros::delay(50);
-            motorEvents += "       ";  // padding to clear old text
-            controller.print(1, 0, "%s", motorEvents.c_str());
-            lastState = true;
-        } else {
-            controller.print(1, 0, "All Motors Normal   ");
-            lastState = false;
-        }
+
+        if (newProblem) controller.rumble("--");
+        if (!motorEvents.empty()) motorEvents += "               ";  // padding to clear old text
+        controller.print(1, 0, "%s", motorEvents.empty() ? "All Motors Normal     " : motorEvents.c_str());
+        lastProblemMotors = currentProblemMotors;
         pros::delay(100);
 
+        // 3. Battery stats
         double voltage = pros::battery::get_voltage() / 1000.0;
         double current = pros::battery::get_current() / 1000.0;
         double power = voltage * current;
@@ -240,7 +246,7 @@ void controllerDisplay(void* param) {
         double elapsed = pros::millis() - driverStart;
         double remaining = MATCH_LENGTH_MS - elapsed;
 
-        // Process all timed rumble events
+        // 4. Timed rumble events
         if (pros::competition::is_connected()) {  // only rumble if competition switch is connected
             for (auto& event : rumbles) {
                 if (!event.triggered && remaining <= event.timeMs) {
