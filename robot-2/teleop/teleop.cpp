@@ -73,7 +73,7 @@ lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
                               10.6,                        // track width (dist between center of wheels width)
                               lemlib::Omniwheel::NEW_325,  // using 3.25 omnis
                               480,                         // drivetrain rpm
-                              6                            // horizontal drift is 6 (bc center traction - should be 8, 6 safer)
+                              5                            // horizontal drift is 6 (bc center traction - should be 8, 6 safer)
 );
 
 // lateral motion controller
@@ -85,7 +85,7 @@ lemlib::ControllerSettings lateralController(14.5,  // proportional gain (kP) (1
                                              200,   // small error range timeout, in milliseconds
                                              2,     // large error range, in inches
                                              500,   // large error range timeout, in milliseconds
-                                             15     // maximum acceleration (slew)
+                                             3      // maximum acceleration (slew)
 );
 
 // angular motion controller
@@ -100,8 +100,8 @@ lemlib::ControllerSettings angularController(2.4,  // proportional gain (kP) (2)
                                              0     // maximum acceleration (slew)
 );
 
-pros::Rotation horizontalEncoder(9);
-lemlib::TrackingWheel horizontalTrackingWheel(&horizontalEncoder, lemlib::Omniwheel::NEW_2, -5.75);  // tune offset
+pros::Rotation horizontalEncoder(-9);  // horizontal tracking wheel on port 9, reversed
+lemlib::TrackingWheel horizontalTrackingWheel(&horizontalEncoder, lemlib::Omniwheel::NEW_2, -5.75);
 
 // sensors for odometry
 lemlib::OdomSensors odomSensors(nullptr,                   // apparently if two nullptrs for the vertical tracking wheels, it will use the drivetrain
@@ -131,8 +131,8 @@ pros::Controller controller(pros::E_CONTROLLER_MASTER);  // define controller
 // ### GLOBAL CONSTANTS ###
 const int LOOP_DELAY = 20;  // loop delay in milliseconds
 
-const bool COLOR_SORT_ENABLED = true;          // whether color sorting is enabled
-const bool DEBUG_PRINT_ENABLED = false;        // whether debug printing task is enabled
+const bool COLOR_SORT_ENABLED = false;         // whether color sorting is enabled
+const bool DEBUG_PRINT_ENABLED = true;         // whether debug printing task is enabled
 const bool CONTROLLER_DISPLAY_ENABLED = true;  // whether controller display task is enabled
 
 // Colorsort
@@ -143,6 +143,8 @@ int colorSortTicker = 0;
 bool opticalLedOn = false;  // track last set PWM value
 
 // ### AUTON VARIABLES ###
+int autonSelection = 2;  // ### DEFAULT AUTON INDEX
+
 struct AutonRoute {
     const char* name;
     AllianceColor alliance;
@@ -158,13 +160,12 @@ const AutonRoute autonRoutes[] = {
 
 const int NUM_AUTONS = 6;
 
-bool autonLocked = true;  // whether the auton selection is confirmed yet
-int autonSelection = 2;
+bool autonLocked = true;                                             // whether the auton selection is confirmed yet
 AllianceColor allianceColor = autonRoutes[autonSelection].alliance;  // default alliance color follows first route
 
 // ### CONTROLLER ###
 const double MATCH_LENGTH_MS = 1.75 * 60 * 1000;  // 1:45 match
-const int MOTOR_OVERHEAT_THRESHOLD = 45;          // 55 Celsius is the thresh, 45 is safe (https://www.vexforum.com/t/v5-overheating-threshold/64984/2)
+const int MOTOR_OVERHEAT_THRESHOLD = 50;          // 55 Celsius is the thresh, 50 is safe (https://www.vexforum.com/t/v5-overheating-threshold/64984/2)
 
 // Controller Rumbles
 RumbleEvent rumbles[] = {
@@ -333,13 +334,82 @@ void autonomous() {
         case 0:  // Red Nothing - do nothing
         case 3:  // Blue Nothing - do nothing
             break;
-        case 4:    // Blue Left
-        case 1: {  // Red left
+        case 4:                                // Blue Left
+        case 1: {                              // Red left
+            chassis.setPose(-46.2, 14.1, 90);  // -45.773, 14.6
 
+            intakeMode = IntakeMode::FORWARD;
+
+            // chassis.moveToPose(-24, 24, 60, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
+            chassis.moveToPose(-26, 22.3, 60, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
+            // chassis.waitUntil(11.5);
+            // loaderSolenoid.set_value(true);
+            // chassis.waitUntilDone();
+            // loaderSolenoid.set_value(false);
+
+            // chassis.moveToPose(-15, 15, -45, 3500, {.forwards = false, .maxSpeed = 50});
+            chassis.moveToPose(-10.5 - 1.5, 11 + 1.5, -45, 3500, {.forwards = false, .maxSpeed = 50});
+            chassis.waitUntil(20);  // (4)
+            // outtake into middle goal
+            intakeMode = IntakeMode::REVERSE;
+            pros::delay(250);
+            intakeMode = IntakeMode::MIDDLE_GOAL;
+            chassis.waitUntilDone();
+            pros::delay(1750);
+
+            // go to loader
+            // chassis.moveToPoint(-40, 40, 2500, {.maxSpeed = 100, .minSpeed = 20}, false);
+            chassis.moveToPoint(-42, 47, 3000, {.maxSpeed = 65, .minSpeed = 5}, false);
+            chassis.moveToPose(-44, 47, -90, 4000, {.maxSpeed = 70}, false);  // lower lead = sharper curve
+            loaderSolenoid.set_value(true);
+
+            // back to forward
+            intakeMode = IntakeMode::FORWARD;
+
+            chassis.moveToPose(-60.5, 47, -90, 1000, {.maxSpeed = 60}, false);  // nudge forward a bit
+            pros::delay(1000);
+
+            // chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);   // nudge forward a bit
+            // chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);  // nudge forward a lot
+
+            chassis.moveToPose(-29.5, 48 - 0.5, -90, 3000, {.forwards = false, .maxSpeed = 80});  // back up to goal straight
+            chassis.waitUntil(5);
+            loaderSolenoid.set_value(false);  // loader up
+            chassis.waitUntil(22);
+            intakeMode = IntakeMode::HIGH_GOAL;  // score
+            chassis.waitUntilDone();
+            pros::delay(700);
+            intakeMode = IntakeMode::OFF;
             break;
         }
-        case 5:    // Blue Right
-        case 2: {  // Red Right (WIP!)
+        case 5:                                 // Blue Right
+        case 2: {                               // Red Right (WIP!)
+            chassis.setPose(-46.2, -14.1, 90);  // -45.773, -14.6
+            intakeMode = IntakeMode::FORWARD;
+
+            chassis.moveToPose(-26, -22.3, 120, 2000, {.maxSpeed = 70}, false);  // grab the 3 balls
+
+            // go to loader
+            chassis.moveToPoint(-40, -45, 3000, {.maxSpeed = 65, .minSpeed = 5}, false);
+            chassis.moveToPose(-44, -47 - 1, -90, 4000, {.maxSpeed = 60}, false);  // lower lead = sharper curve
+            loaderSolenoid.set_value(true);
+
+            chassis.moveToPose(-61, -47 - 1, -90, 2000, {.maxSpeed = 60}, false);  // nudge forward a bit
+            pros::delay(1000);
+
+            // move to score
+            chassis.moveToPose(-29, -48 - 0.5, -90, 5500, {.forwards = false, .maxSpeed = 80});  // back up to goal straight
+            chassis.waitUntil(5);
+            loaderSolenoid.set_value(false);  // loader up
+            chassis.waitUntil(22);
+            intakeMode = IntakeMode::HIGH_GOAL;  // score
+            chassis.waitUntilDone();
+            pros::delay(2000);
+            intakeMode = IntakeMode::OFF;
+
+            chassis.moveToPose(-38, -48, -90, 2000, {.maxSpeed = 70});
+            chassis.moveToPose(-15, -36, -90, 3000, {.forwards = false, .lead = 0.2, .maxSpeed = 60});
+
             break;
         }
         default:
@@ -385,7 +455,7 @@ bool isOtherAllianceBlockDetected() {
     return false;
 }
 
-void applyIntakeMode(IntakeMode mode, int ticks) {
+void setIntakeMode(IntakeMode mode, int ticks) {
     if (COLOR_SORT_ENABLED && (mode == IntakeMode::FORWARD)) {
         if (!opticalLedOn) {
             optical.set_led_pwm(OPTICAL_LED_PWM);
@@ -406,7 +476,7 @@ void applyIntakeMode(IntakeMode mode, int ticks) {
         colorSortTicker = 0;
     }
 
-    int topRollerSpeed = colorSortTicker >= 5 ? 127 : 0;
+    int topRollerSpeed = colorSortTicker >= 5 ? 127 : -16;
 
     switch (mode) {
         case IntakeMode::FORWARD:
@@ -470,12 +540,11 @@ void controlIntake(void* param) {
                 intakeMode = (intakeMode == IntakeMode::REVERSE) ? IntakeMode::OFF : IntakeMode::REVERSE;
             }
             r1Pressed = r1Current;
-
-            // Only apply when the mode actually changed
-            applyIntakeMode(intakeMode, ticks);
-
-            ticks++;
         }
+
+        setIntakeMode(intakeMode, ticks);
+
+        ticks++;
 
         pros::delay(LOOP_DELAY);
     }
@@ -496,7 +565,7 @@ void controlDescoreMech() {
     bool l1Current = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
     if (l1Current && !l1Pressed) {
         descoreMechDeployed = !descoreMechDeployed;
-        descoreSolenoid.set_value(descoreMechDeployed);
+        descoreSolenoid.set_value(!descoreMechDeployed);  // invert it, so it starts up
     }
     l1Pressed = l1Current;
 }
