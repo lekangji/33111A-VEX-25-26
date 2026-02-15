@@ -43,7 +43,7 @@ pros::adi::DigitalOut descoreSolenoid('B');     // descoring solenoid
 pros::adi::DigitalOut middleGoalSolenoid('C');  // middle goal solenoid
 
 pros::Imu inertial(13);     // inertial sensor
-pros::Optical optical(18);  // optical sensor for intake colorsort
+pros::Optical optical(16);  // optical sensor for intake colorsort
 
 // ## MOTORS ##
 // Drivetrain motor groups
@@ -129,11 +129,11 @@ lemlib::Chassis chassis(drivetrain, lateralController, angularController, odomSe
 pros::Controller controller(pros::E_CONTROLLER_MASTER);  // define controller
 
 // ### GLOBAL CONSTANTS ###
-const int LOOP_DELAY = 20;  // loop delay in milliseconds
-
-const bool COLOR_SORT_ENABLED = false;         // whether color sorting is enabled
-const bool DEBUG_PRINT_ENABLED = true;         // whether debug printing task is enabled
+const bool COLOR_SORT_ENABLED = true;          // ### whether color sorting is enabled
+const bool DEBUG_PRINT_ENABLED = true;         // ### whether debug printing task is enabled
 const bool CONTROLLER_DISPLAY_ENABLED = true;  // whether controller display task is enabled
+
+const int LOOP_DELAY = 20;  // loop delay in milliseconds
 
 // Colorsort
 const int OPTICAL_INTEGRATION_TIME = LOOP_DELAY * 3;  // 60 ms
@@ -143,7 +143,7 @@ int colorSortTicker = 0;
 bool opticalLedOn = false;  // track last set PWM value
 
 // ### AUTON VARIABLES ###
-int autonSelection = 2;  // ### DEFAULT AUTON INDEX
+int autonSelection = 1;  // ### DEFAULT AUTON INDEX
 
 struct AutonRoute {
     const char* name;
@@ -341,7 +341,9 @@ void autonomous() {
             intakeMode = IntakeMode::FORWARD;
 
             // chassis.moveToPose(-24, 24, 60, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
-            chassis.moveToPose(-26, 22.3, 60, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
+            // chassis.moveToPose(-26, 22.3, 60, 3000, {.maxSpeed = 80}, false);  // grab the 3 balls
+            chassis.moveToPose(-22, 24, 60, 3000, {.lead = 0.3, .maxSpeed = 65}, false);  // grab the 3 balls
+
             // chassis.waitUntil(11.5);
             // loaderSolenoid.set_value(true);
             // chassis.waitUntilDone();
@@ -355,7 +357,7 @@ void autonomous() {
             pros::delay(250);
             intakeMode = IntakeMode::MIDDLE_GOAL;
             chassis.waitUntilDone();
-            pros::delay(1750);
+            pros::delay(1000);
 
             // go to loader
             // chassis.moveToPoint(-40, 40, 2500, {.maxSpeed = 100, .minSpeed = 20}, false);
@@ -367,23 +369,33 @@ void autonomous() {
             intakeMode = IntakeMode::FORWARD;
 
             chassis.moveToPose(-60.5, 47, -90, 1000, {.maxSpeed = 60}, false);  // nudge forward a bit
-            pros::delay(1000);
+            pros::delay(800);
 
             // chassis.moveToPose(pose.x - 12, 47, -90, 500, {.maxSpeed = 20}, false);   // nudge forward a bit
             // chassis.moveToPose(pose.x - 15, 47, -90, 2000, {.maxSpeed = 20}, false);  // nudge forward a lot
 
-            chassis.moveToPose(-29.5, 48 - 0.5, -90, 3000, {.forwards = false, .maxSpeed = 80});  // back up to goal straight
+            chassis.moveToPoint(-29.5, 48 - 0.5, 3500, {.forwards = false, .maxSpeed = 65});  // back up to goal straight
             chassis.waitUntil(5);
             loaderSolenoid.set_value(false);  // loader up
-            chassis.waitUntil(22);
+            chassis.waitUntil(20);
+
             intakeMode = IntakeMode::HIGH_GOAL;  // score
-            chassis.waitUntilDone();
-            pros::delay(700);
+            // loop for up to 2460ms in the optical integration time steps
+            for (int elapsed = 0; elapsed < 2460; elapsed += OPTICAL_INTEGRATION_TIME) {
+                if (colorSortTicker > 5) {
+                    break;
+                }
+                pros::delay(OPTICAL_INTEGRATION_TIME);
+            }
             intakeMode = IntakeMode::OFF;
+
+            // goal rush
+            chassis.moveToPoint(-42, 48, 2500, {.maxSpeed = 70});
+            chassis.moveToPose(-14, 59, -90, 3500, {.forwards = false, .lead = 0.1, .maxSpeed = 60});
             break;
         }
         case 5:                                 // Blue Right
-        case 2: {                               // Red Right (WIP!)
+        case 2: {                               // Red Right
             chassis.setPose(-46.2, -14.1, 90);  // -45.773, -14.6
             intakeMode = IntakeMode::FORWARD;
 
@@ -443,12 +455,12 @@ void controlDrivetrain() {
 bool isOtherAllianceBlockDetected() {
     // Sort by color
     int proximity = optical.get_proximity();  // higher = closer
-    if (proximity > 35) {
+    if (proximity > 180) {
         // object detected
         double hue = optical.get_hue();
-        if (hue >= 300 && hue <= 360) {  // detected red
+        if (hue >= 325 && hue <= 360 || hue <= 10) {  // detected red 342-1
             return (allianceColor == AllianceColor::BLUE);
-        } else if (hue >= 215 && hue <= 250) {  // detected blue
+        } else if (hue >= 215 && hue <= 245) {  // detected blue 227-230
             return (allianceColor == AllianceColor::RED);
         }
     }
@@ -456,15 +468,17 @@ bool isOtherAllianceBlockDetected() {
 }
 
 void setIntakeMode(IntakeMode mode, int ticks) {
-    if (COLOR_SORT_ENABLED && (mode == IntakeMode::FORWARD)) {
+    if (COLOR_SORT_ENABLED && (mode == IntakeMode::HIGH_GOAL)) {
         if (!opticalLedOn) {
             optical.set_led_pwm(OPTICAL_LED_PWM);
             opticalLedOn = true;
         }
         if (ticks % (OPTICAL_INTEGRATION_TIME / LOOP_DELAY) == 0) {  // update every few ticks - eq to integration time
             if (isOtherAllianceBlockDetected()) {
+                pros::lcd::print(6, "bad block detected! %d %f", optical.get_proximity(), optical.get_hue());
                 colorSortTicker = std::min(colorSortTicker + 4, COLORSORT_TICKER_LIMIT);
             } else {
+                pros::lcd::print(6, "nobody or good ball! %d %f", optical.get_proximity(), optical.get_hue());
                 colorSortTicker = std::max(colorSortTicker - 3, 0);
             }
         }
@@ -476,14 +490,12 @@ void setIntakeMode(IntakeMode mode, int ticks) {
         colorSortTicker = 0;
     }
 
-    int topRollerSpeed = colorSortTicker >= 5 ? 127 : -16;
-
     switch (mode) {
         case IntakeMode::FORWARD:
             middleGoalSolenoid.set_value(false);
             intake.move(127);
             middleRoller.move(64);
-            topRoller.move(topRollerSpeed);
+            topRoller.move(-16);
             break;
         case IntakeMode::REVERSE:
             middleGoalSolenoid.set_value(false);
