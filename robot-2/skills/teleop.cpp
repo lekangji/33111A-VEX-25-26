@@ -77,15 +77,15 @@ lemlib::Drivetrain drivetrain(&leftMotors,                 // left motor group
 );
 
 // lateral motion controller
-lemlib::ControllerSettings lateralController(14,   // proportional gain (kP) (10) - 14
+lemlib::ControllerSettings lateralController(10,   // proportional gain (kP) (10) - 14.5
                                              0,    // integral gain (kI)
-                                             4,    // derivative gain (kD) (2) - 2.75
+                                             4,    // derivative gain (kD) (2) - 4.5
                                              3,    // anti windup
                                              1,    // small error range, in inches
                                              200,  // small error range timeout, in milliseconds
                                              2,    // large error range, in inches
                                              500,  // large error range timeout, in milliseconds
-                                             0.75  // maximum acceleration (slew) 127/3*50ms = time to max speed
+                                             10    // maximum acceleration (slew) 0.8
 );
 
 // angular motion controller
@@ -100,8 +100,8 @@ lemlib::ControllerSettings angularController(2.4,  // proportional gain (kP) (2)
                                              0     // maximum acceleration (slew)
 );
 
-pros::Rotation horizontalEncoder(-9);  // horizontal tracking wheel on port 9, reversed
-lemlib::TrackingWheel horizontalTrackingWheel(&horizontalEncoder, lemlib::Omniwheel::NEW_2, -5.75);
+pros::Rotation horizontalEncoder(-9);                                                                // horizontal tracking wheel on port 9, reversed
+lemlib::TrackingWheel horizontalTrackingWheel(&horizontalEncoder, lemlib::Omniwheel::NEW_2, -3.25);  //(-3.5) -3.25 center
 
 // sensors for odometry
 lemlib::OdomSensors odomSensors(nullptr,                   // apparently if two nullptrs for the vertical tracking wheels, it will use the drivetrain
@@ -120,7 +120,7 @@ lemlib::ExpoDriveCurve throttleCurve(10,   // joystick deadband out of 127
 // input curve for steer input during driver control
 lemlib::ExpoDriveCurve steerCurve(10,   // joystick deadband out of 127
                                   15,   // minimum output where drivetrain will move out of 127
-                                  1.02  // expo curve gain
+                                  1.03  // expo curve gain
 );
 
 // create the chassis
@@ -189,6 +189,12 @@ bool l2Pressed = false;
 bool aPressed = false;
 bool xPressed = false;
 bool rightPressed = false;
+
+// chassis coast not brake
+// reset pose at long goal algin
+// movetopoint, turntopoint, not movetopose (risky)
+// park: movetopose, maybe speed not enough
+// speed: turn 50, drive 60
 
 // Global task pointers for task management
 pros::Task* debugPrintTask = nullptr;
@@ -268,6 +274,7 @@ void debugPrint(void* param) {
         pros::lcd::print(3, "X: %.1f", pose.x);
         pros::lcd::print(4, "Y: %.1f", pose.y);
         pros::lcd::print(5, "T: %.1f", pose.theta);
+        pros::lcd::print(6, "tracking %.2f", horizontalTrackingWheel.getDistanceTraveled());
 
         pros::delay(200);
     }
@@ -278,52 +285,70 @@ void autonomous() {
 
     intakeMode = IntakeMode::FORWARD;
 
+    descoreSolenoid.set_value(true);  // deploy descore mech
+
     // ### SCORE MIDDLE
-    chassis.moveToPose(-22, 24, 60, 3000, {.lead = 0.3, .maxSpeed = 65}, false);  // grab the 3 balls
+    chassis.moveToPose(-22, 24, 60, 3000, {.lead = 0.3, .maxSpeed = 60}, false);  // grab the 3 balls
 
     // chassis.moveToPose(-15, 15, -45, 3500, {.forwards = false, .maxSpeed = 50});
-    chassis.moveToPose(-10.5 - 1.5, 11 + 1.5, -45, 3500, {.forwards = false, .maxSpeed = 50});
+    chassis.moveToPose(-11.5, 11.5, -45, 3500, {.forwards = false, .maxSpeed = 50});
     chassis.waitUntil(20);  // (4)
     // outtake into middle goal
     intakeMode = IntakeMode::REVERSE;
     pros::delay(250);
     intakeMode = IntakeMode::MIDDLE_GOAL;
     chassis.waitUntilDone();
-    pros::delay(1500);
+    pros::delay(2000);
 
     // ### LOADER 1
     chassis.moveToPoint(-42, 47, 3000, {.maxSpeed = 65, .minSpeed = 5}, false);
-    chassis.moveToPose(-44, 47, -90, 4000, {.maxSpeed = 70}, false);  // lower lead = sharper curve
+    chassis.moveToPose(-44, 47, -90, 2000, {.maxSpeed = 60}, false);  // lower lead = sharper curve
     loaderSolenoid.set_value(true);
+
     // back to forward
     intakeMode = IntakeMode::FORWARD;
 
-    chassis.moveToPoint(-60.5, 47, 1500, {.maxSpeed = 60}, false);  // nudge forward a bit
+    chassis.moveToPoint(-60.5, 47, 900, {.maxSpeed = 60}, false);  // nudge forward a bit
     pros::delay(2000);
 
-    chassis.moveToPoint(-45, 47, 2000, {.forwards = false, .maxSpeed = 70});  // back up
+    chassis.moveToPoint(-45, 47, 2000, {.forwards = false, .maxSpeed = 50});  // back up
     chassis.waitUntil(10);
     loaderSolenoid.set_value(false);  // loader up
     chassis.waitUntilDone();
 
     // ### SCORE HIGH 1
     intakeMode = IntakeMode::OFF;
-    chassis.moveToPose(-45, 36, 180, 3000, {.maxSpeed = 70, .minSpeed = 15}, false);  // 6 in turning offset?
+    chassis.turnToPoint(-30, 30, 2000, {.maxSpeed = 50}, false);
+    chassis.moveToPoint(-30, 30, 2000, {.maxSpeed = 55}, false);
+    // chassis.moveToPose(-45, 30, 180, 3000, {.maxSpeed = 60}, false);  // 6 in turning offset?
 
     // do not get those 4 balls + go around the field
-    chassis.moveToPoint(25, 30, 4000, {.maxSpeed = 50, .minSpeed = 10}, false);  // across the field
+    chassis.turnToPoint(-25, 30, 2000, {.maxSpeed = 50}, false);  // turn towards field
+    chassis.moveToPoint(25, 30, 4000, {.maxSpeed = 55}, false);   // across the field
 
     // we're at other side of long goal now
-    chassis.moveToPose(55, 47, 90, 4000, {.lead = 0.15, .maxSpeed = 45}, false);  // align to goal
-    chassis.moveToPoint(30.5, 47, 3000, {.forwards = false, .maxSpeed = 60});     // back up to goal straight
-    chassis.waitUntil(16);                                                        // (14 old)
-    intakeMode = IntakeMode::HIGH_GOAL;                                           // score
+    chassis.moveToPose(53, 47 - 3, 90, 4000, {
+                                                 .lead = 0.15,
+                                                 .maxSpeed = 45,
+                                                 .earlyExitRange = 1,
+                                             },
+                       false);  // align to goal
+    chassis.moveToPoint(30.5, 47 - 2.5, 3000, {
+                                                  .forwards = false,
+                                                  .maxSpeed = 50,
+                                                  .earlyExitRange = 1,
+                                              });  // back up to goal straight
+    chassis.waitUntil(16);                         // (14 old)
+    intakeMode = IntakeMode::HIGH_GOAL;            // score
     chassis.waitUntilDone();
     pros::delay(3000);
 
     // ### SCORE HIGH 2
     // into loader
-    chassis.moveToPoint(60.5, 47, 3000, {.maxSpeed = 60});  // nudge forward a bit (61.5)
+    chassis.moveToPoint(60.5, 47 - 2.5, 3000, {
+                                                  .maxSpeed = 60,
+                                                  .earlyExitRange = 1,
+                                              });  // nudge forward a bit (61.5)
     chassis.waitUntil(2);
     loaderSolenoid.set_value(true);  // loader down
     intakeMode = IntakeMode::FORWARD;
@@ -331,44 +356,72 @@ void autonomous() {
     pros::delay(2000);
 
     // score
-    chassis.moveToPoint(30.5, 47, 4000, {.forwards = false, .maxSpeed = 60});  // back up to goal straight
+    chassis.moveToPoint(30.5, 47 - 2.5, 4000, {
+                                                  .forwards = false,
+                                                  .maxSpeed = 60,
+                                                  .earlyExitRange = 1,
+                                              });  // back up to goal straight
     chassis.waitUntil(5);
     loaderSolenoid.set_value(false);  // loader up
     chassis.waitUntil(20);
     intakeMode = IntakeMode::HIGH_GOAL;  // score
-    pros::delay(3000);
+    pros::delay(4000);
+
+    // bump it further in?
+    chassis.moveToPoint(35, 47 - 2.5, 2000, {
+                                                .maxSpeed = 50,
+                                            },
+                        false);
+    chassis.moveToPoint(30, 47 - 2.5, 1500, {
+                                                .forwards = false,
+                                                .maxSpeed = 50,
+                                            },
+                        false);  // back up to goal straight
 
     // ### Go park
     intakeMode = IntakeMode::HIGH_GOAL;
-    chassis.moveToPose(45, 47, 90, 2500, {.maxSpeed = 70, .minSpeed = 15}, false);   // out of the scoring
-    chassis.moveToPose(40, 30, 180, 5000, {.maxSpeed = 70, .minSpeed = 15}, false);  // go back out
+    chassis.moveToPose(45, 47 - 2.5, 90, 2500, {.maxSpeed = 60, .minSpeed = 15}, false);  // out of the scoring
+    chassis.moveToPose(40, 30, 180, 5000, {.maxSpeed = 60, .minSpeed = 15}, false);       // go back out
 
     chassis.moveToPoint(-58, 30, 10000, {.maxSpeed = 50}, false);  // across the field
     chassis.turnToHeading(180, 3000, {}, false);                   // face the park
 
     intakeMode = IntakeMode::REVERSE;
-    chassis.moveToPose(-60, 17, 180, 5000, {.lead = 0.05}, false);
-    leftMotors.move_velocity(100);
-    rightMotors.move_velocity(100);
-    pros::delay(3000);
+    chassis.moveToPose(-61, 17, 180, 5000, {.lead = 0.07}, false);
+
+    leftMotors.move_velocity(30);
+    rightMotors.move_velocity(30);
+    pros::delay(2500);
     leftMotors.move_velocity(0);
     rightMotors.move_velocity(0);
+    pros::delay(500);
 
     chassis.setPose(0, 0, 180);
-    chassis.moveToPose(0, 4, 180, 3000, {
+    chassis.moveToPose(0, 5, 180, 3000, {
                                             .forwards = false,
-                                            .maxSpeed = 50,
+                                            .maxSpeed = 40,
                                         },
                        false);
     loaderSolenoid.set_value(true);
+    pros::delay(500);
+    chassis.moveToPose(0, 0, 180, 3000, {
+                                            .maxSpeed = 30,
+                                        },
+                       false);
+    pros::delay(500);
+    chassis.moveToPose(0, 5, 180, 3000, {
+                                            .forwards = false,
+                                            .maxSpeed = 40,
+                                        },
+                       false);
+    pros::delay(500);
+
     leftMotors.move_velocity(600);
     rightMotors.move_velocity(600);
     // while (chassis.getPose().y > -5) pros::delay(50);
-    pros::delay(1250);
+    pros::delay(2000);
     leftMotors.move_velocity(0);
     rightMotors.move_velocity(0);
-    loaderSolenoid.set_value(false);
-    pros::delay(2000);
 }
 
 void controlDrivetrain() {
@@ -532,6 +585,10 @@ void initialize() {
     inertial.reset();
     pros::delay(150);
     chassis.calibrate();
+
+    chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
+
+    chassis.setPose(-46.2, 14.1, 90);  // start at red starting place
 
     // Create debug print task that runs separately
     if (DEBUG_PRINT_ENABLED) {
